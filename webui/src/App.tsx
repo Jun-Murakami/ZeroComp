@@ -374,7 +374,7 @@ function App() {
           <Paper
             elevation={2}
             sx={{
-              pt: 2,
+              pt: isMobile ? 0 : 2,
               px: 2,
               pb: 1,
               mb: 1,
