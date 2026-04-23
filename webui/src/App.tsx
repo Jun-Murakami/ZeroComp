@@ -772,6 +772,8 @@ function App() {
                   defaultValue={6}
                   formatValue={(v) => v.toFixed(1)}
                   unit='dB'
+                  wheelStep={1}
+                  wheelStepFine={0.1}
                   marks={[
                     { value: 0, label: '0' },
                     { value: 6, label: '6' },

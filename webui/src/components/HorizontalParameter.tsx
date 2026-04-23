@@ -20,6 +20,11 @@ interface HorizontalParameterProps {
   labelWidth?: number;
   /** 入力ボックス（右側）の固定幅 */
   inputWidth?: number;
+  /** wheel 1tick の刻み（linear は値空間、log は step/100 を norm 空間に使う）。
+   *  linear の APVTS が interval step を持つ場合（例: Knee の 0.1 dB）、
+   *  fine step はその interval 以上に設定すること（それ未満だとスナップで値が変わらない）。 */
+  wheelStep?: number;
+  wheelStepFine?: number;
 }
 
 const valueToNorm = (v: number, min: number, max: number, skew: SkewKind): number => {
@@ -51,6 +56,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
   marks,
   labelWidth = 46,
   inputWidth = 50,
+  wheelStep = 1,
+  wheelStepFine = 0.2,
 }) => {
   const { value, state: sliderState, setScaled } = useJuceSliderValue(parameterId);
   const [isDragging, setIsDragging] = useState(false);
@@ -66,60 +73,87 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
   const formatted = formatValue ? formatValue(value) : value.toFixed(1);
   const displayInput = isEditing ? inputText : formatted;
 
+  // wheel 1tick の値空間での刻み量。
+  //  linear: そのまま値空間で直接加減算（APVTS の interval step より細かくならない）
+  //  log:    step / 100 を「log 空間での 0..1 刻み」として扱い、比率で変化させる
+  const stepValueLinear = (current: number, fine: boolean, direction: 1 | -1): number => {
+    const s = fine ? wheelStepFine : wheelStep;
+    return current + s * direction;
+  };
+  const stepValueLog = (current: number, fine: boolean, direction: 1 | -1): number => {
+    const s = fine ? wheelStepFine : wheelStep;
+    const normStep = s / 100;
+    const cur = valueToNorm(current, min, max, 'log');
+    return normToValue(cur + normStep * direction, min, max, 'log');
+  };
+  const stepValue = (current: number, fine: boolean, direction: 1 | -1): number =>
+    skew === 'log' ? stepValueLog(current, fine, direction) : stepValueLinear(current, fine, direction);
+
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = wheelRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const direction = -e.deltaY > 0 ? 1 : -1;
+      const direction: 1 | -1 = -e.deltaY > 0 ? 1 : -1;
       const fine = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
-      const normStep = fine ? 0.002 : 0.01;
-      const cur = valueToNorm(valueRef.current, min, max, skew);
-      applyValue(normToValue(cur + normStep * direction, min, max, skew));
+      applyValue(stepValue(valueRef.current, fine, direction));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [min, max, skew]);
+  }, [min, max, skew, wheelStep, wheelStepFine]);
 
   // 修飾キー + ポインタ操作：
   //  Ctrl/Cmd + クリック      → defaultValue にリセット
-  //  (Ctrl/Cmd/Shift) + ドラッグ → 微調整モード（正規化空間で 1px = 0.002）
+  //  (Ctrl/Cmd/Shift) + ドラッグ → 微調整モード
+  //    linear: 1px = wheelStepFine 値（dB など）/ log: 1px = 0.002 norm
   //  修飾キーなし              → MUI Slider の通常ドラッグに委譲
-  const fineDragStartNormRef = useRef<number>(0);
+  const fineDragStartRef = useRef<{ value: number; norm: number }>({ value: 0, norm: 0 });
   const handlePointerDownCapture = useFineAdjustPointer({
     orientation: 'horizontal',
     onReset: () => {
       if (defaultValue !== undefined) applyValue(defaultValue);
     },
     onDragStart: () => {
-      fineDragStartNormRef.current = valueToNorm(valueRef.current, min, max, skew);
+      fineDragStartRef.current = {
+        value: valueRef.current,
+        norm: valueToNorm(valueRef.current, min, max, skew),
+      };
       sliderState?.sliderDragStarted();
     },
     onDragDelta: (deltaPx) => {
-      // 1px = 0.002 norm。log/linear 共通。0..1 を 500px で横断。
-      applyValue(normToValue(fineDragStartNormRef.current + deltaPx * 0.002, min, max, skew));
+      if (skew === 'log') {
+        applyValue(normToValue(fineDragStartRef.current.norm + deltaPx * 0.002, min, max, 'log'));
+      } else {
+        applyValue(fineDragStartRef.current.value + deltaPx * wheelStepFine);
+      }
     },
     onDragEnd: () => sliderState?.sliderDragEnded(),
   });
 
   // 数値入力欄のホイール / 縦ドラッグ
   const inputElRef = useRef<HTMLInputElement | null>(null);
-  const inputDragStartNormRef = useRef<number>(0);
+  const inputDragStartRef = useRef<{ value: number; norm: number }>({ value: 0, norm: 0 });
   useNumberInputAdjust(inputElRef, {
     onWheelStep: (direction, fine) => {
-      const normStep = fine ? 0.002 : 0.01;
-      const cur = valueToNorm(valueRef.current, min, max, skew);
-      applyValue(normToValue(cur + normStep * direction, min, max, skew));
+      applyValue(stepValue(valueRef.current, fine, direction));
     },
     onDragStart: () => {
-      inputDragStartNormRef.current = valueToNorm(valueRef.current, min, max, skew);
+      inputDragStartRef.current = {
+        value: valueRef.current,
+        norm: valueToNorm(valueRef.current, min, max, skew),
+      };
       sliderState?.sliderDragStarted();
     },
     onDragDelta: (deltaY, fine) => {
-      const normStep = fine ? 0.002 : 0.01;
-      applyValue(normToValue(inputDragStartNormRef.current + deltaY * normStep, min, max, skew));
+      if (skew === 'log') {
+        const normStep = fine ? 0.002 : 0.01;
+        applyValue(normToValue(inputDragStartRef.current.norm + deltaY * normStep, min, max, 'log'));
+      } else {
+        const step = fine ? wheelStepFine : wheelStep;
+        applyValue(inputDragStartRef.current.value + deltaY * step);
+      }
     },
     onDragEnd: () => sliderState?.sliderDragEnded(),
   });
