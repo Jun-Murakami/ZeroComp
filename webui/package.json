@@ -1,0 +1,44 @@
+{
+  "name": "zerocomp-webui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "license-checker --production --json --out src/assets/licenses.json",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "licenses": "license-checker --production --json --out src/assets/licenses.json"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@fontsource/jost": "^5.2.8",
+    "@fontsource/red-hat-mono": "^5.2.8",
+    "@mui/icons-material": "^9.0.0",
+    "@mui/material": "^9.0.0",
+    "juce-framework-frontend-mirror": "^8.0.10",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-use": "^17.6.0",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@rolldown/plugin-babel": "^0.2.3",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "eslint": "^10.2.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.5.0",
+    "license-checker": "^25.0.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.59.0",
+    "vite": "^8.0.9"
+  }
+}

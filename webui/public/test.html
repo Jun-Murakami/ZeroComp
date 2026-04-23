@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>JUCE Bridge Test</title>
+    <script type="module" src="/js/juce/index.js"></script>
+</head>
+<body>
+    <h1>JUCE Bridge Test</h1>
+    <div id="status">Checking JUCE bridge...</div>
+    
+    <script type="module">
+        // JUCEブリッジの確認
+        const checkBridge = () => {
+            const statusEl = document.getElementById('status');
+            
+            if (window.__JUCE__) {
+                statusEl.innerHTML = '<h2 style="color: green;">✅ JUCE Bridge Available!</h2>';
+                
+                // 初期化データの表示
+                if (window.__JUCE__.initialisationData) {
+                    const data = window.__JUCE__.initialisationData;
+                    statusEl.innerHTML += `
+                        <p>Vendor: ${data.vendor || 'N/A'}</p>
+                        <p>Plugin Name: ${data.pluginName || 'N/A'}</p>
+                        <p>Plugin Version: ${data.pluginVersion || 'N/A'}</p>
+                    `;
+                }
+                
+                // backend の確認
+                if (window.__JUCE__.backend) {
+                    statusEl.innerHTML += '<p style="color: green;">✅ Backend available</p>';
+                } else {
+                    statusEl.innerHTML += '<p style="color: red;">❌ Backend not available</p>';
+                }
+                
+                // getNativeFunction の確認
+                if (window.__JUCE__.getNativeFunction) {
+                    statusEl.innerHTML += '<p style="color: green;">✅ getNativeFunction available</p>';
+                } else {
+                    statusEl.innerHTML += '<p style="color: red;">❌ getNativeFunction not available</p>';
+                }
+            } else {
+                statusEl.innerHTML = '<h2 style="color: red;">❌ JUCE Bridge NOT Available</h2>';
+                setTimeout(checkBridge, 1000);
+            }
+        };
+        
+        // ページロード時にチェック
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', checkBridge);
+        } else {
+            checkBridge();
+        }
+    </script>
+</body>
+</html>

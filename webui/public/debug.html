@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ZeroComp Debug</title>
+    <style>
+        body { 
+            background: #1e1e1e; 
+            color: #fff; 
+            padding: 20px;
+            font-family: monospace;
+        }
+        pre { 
+            background: #333; 
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        h1 { color: #4fc3f7; }
+    </style>
+</head>
+<body>
+    <h1>ZeroComp Debug</h1>
+    <h2>JUCE Status</h2>
+    <pre id="juce-status">Checking...</pre>
+    
+    <h2>Console Log</h2>
+    <pre id="console-log"></pre>
+    
+    <script type="module">
+        const log = document.getElementById('console-log');
+        const status = document.getElementById('juce-status');
+        
+        // コンソールログをキャプチャ
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            log.textContent += args.join(' ') + '\n';
+        };
+        
+        // JUCEライブラリをインポート
+        import('juce-framework-frontend-mirror').then(module => {
+            console.log('JUCE module loaded:', module);
+            
+            // JUCE状態をチェック
+            const checkJuce = () => {
+                const info = {
+                    'window.__JUCE__': !!window.__JUCE__,
+                    'window.__JUCE__.backend': !!window.__JUCE__?.backend,
+                    'window.getNativeFunction': typeof window.getNativeFunction,
+                    'module.getNativeFunction': typeof module.getNativeFunction,
+                    'initialisationData': window.__JUCE__?.initialisationData || 'Not available'
+                };
+                status.textContent = JSON.stringify(info, null, 2);
+                
+                if (!window.__JUCE__) {
+                    setTimeout(checkJuce, 500);
+                }
+            };
+            checkJuce();
+            
+        }).catch(error => {
+            console.log('Error loading JUCE module:', error);
+        });
+    </script>
+</body>
+</html>

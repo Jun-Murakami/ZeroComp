@@ -1,0 +1,64 @@
+/build
+
+# AAX SDK (proprietary - not redistributable)
+/AAX_SDK/
+/aax-sdk/
+/AAX/
+
+# WebUI build output (platform-specific)
+/plugin/ui/public/
+
+# Release packages
+/releases/
+
+# Node modules
+/webui/node_modules/
+/webui/dist/
+/webui/.vite/
+
+# IDE and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Emscripten SDK
+/emsdk/
+
+# WASM build
+/wasm/build/
+
+# Web-only assets (generated)
+/webui/public-web/wasm/
+/webui/public-web/audio/
+
+# Build artifacts
+*.dll
+*.exe
+*.dylib
+*.so
+*.vst3
+*.vst
+*.au
+*.aax
+*.component
+
+# Development only
+.claude/
+.serena/
+.cursor/
+.vscode/
+.spec-workflow/
+juce-webview-tutorial
+.mcp.json
+
+# Temporary files
+*.tmp
+*.log
+*.cache
+zerocomp-dev.pfx
+mixcompare-dev.pfx
+*.env

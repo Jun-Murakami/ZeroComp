@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>WebView Version Check</title>
+    <style>
+        body { 
+            background: #1e1e1e; 
+            color: #fff; 
+            padding: 20px;
+            font-family: monospace;
+        }
+        .info { 
+            background: #333; 
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success { color: #4fc3f7; }
+        .warning { color: #ff9800; }
+        .error { color: #f44336; }
+        h1 { color: #4fc3f7; }
+        pre { white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>WebView Environment Check</h1>
+    
+    <div class="info">
+        <h2>User Agent</h2>
+        <pre id="user-agent"></pre>
+    </div>
+    
+    <div class="info">
+        <h2>WebView2 Detection</h2>
+        <pre id="webview2-check"></pre>
+    </div>
+    
+    <div class="info">
+        <h2>JUCE Backend</h2>
+        <pre id="juce-check"></pre>
+    </div>
+    
+    <div class="info">
+        <h2>Browser Features</h2>
+        <pre id="features"></pre>
+    </div>
+    
+    <script>
+        // User Agent
+        document.getElementById('user-agent').textContent = navigator.userAgent;
+        
+        // WebView2 Detection
+        const isWebView2 = () => {
+            const ua = navigator.userAgent;
+            // WebView2はEdgeのUser Agentを含み、Edgvという文字列を含む
+            return ua.includes('Edg/') && (ua.includes('WebView2') || window.chrome?.webview);
+        };
+        
+        const webview2Info = {
+            'Is WebView2': isWebView2(),
+            'Has chrome.webview': !!window.chrome?.webview,
+            'User Agent contains Edg': navigator.userAgent.includes('Edg/'),
+            'User Agent contains WebView2': navigator.userAgent.includes('WebView2')
+        };
+        
+        const webview2El = document.getElementById('webview2-check');
+        webview2El.innerHTML = Object.entries(webview2Info)
+            .map(([key, value]) => {
+                const className = value ? 'success' : 'warning';
+                return `<span class="${className}">${key}: ${value}</span>`;
+            }).join('\n');
+        
+        // JUCE Backend Check
+        const juceInfo = {
+            'window.__JUCE__': !!window.__JUCE__,
+            'window.__JUCE__.backend': !!window.__JUCE__?.backend,
+            'window.getNativeFunction': typeof window.getNativeFunction,
+            'Initialization Data': JSON.stringify(window.__JUCE__?.initialisationData || {}, null, 2)
+        };
+        
+        document.getElementById('juce-check').textContent = 
+            Object.entries(juceInfo)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join('\n');
+        
+        // Browser Features
+        const features = {
+            'DevTools Available': typeof window.chrome !== 'undefined' && window.chrome.devtools,
+            'Console Available': typeof console !== 'undefined',
+            'Local Storage': typeof localStorage !== 'undefined',
+            'Session Storage': typeof sessionStorage !== 'undefined',
+            'IndexedDB': typeof indexedDB !== 'undefined',
+            'WebGL': !!document.createElement('canvas').getContext('webgl'),
+            'WebAudio': typeof AudioContext !== 'undefined',
+            'Fetch API': typeof fetch !== 'undefined',
+            'ES6 Support': typeof Promise !== 'undefined'
+        };
+        
+        const featuresEl = document.getElementById('features');
+        featuresEl.innerHTML = Object.entries(features)
+            .map(([key, value]) => {
+                const className = value ? 'success' : 'error';
+                return `<span class="${className}">${key}: ${value}</span>`;
+            }).join('\n');
+            
+        // Edge/Chromium Version
+        const match = navigator.userAgent.match(/Edg\/(\d+\.\d+\.\d+\.\d+)/);
+        if (match) {
+            const version = match[1];
+            const majorVersion = parseInt(version.split('.')[0]);
+            console.log(`Edge/Chromium Version: ${version} (Major: ${majorVersion})`);
+            
+            const versionInfo = document.createElement('div');
+            versionInfo.className = 'info';
+            versionInfo.innerHTML = `
+                <h2>Browser Version</h2>
+                <pre class="success">Edge/Chromium Version: ${version}
+Major Version: ${majorVersion}
+WebView2 Runtime: ${isWebView2() ? 'Yes' : 'No'}</pre>
+            `;
+            document.body.appendChild(versionInfo);
+        }
+    </script>
+</body>
+</html>
