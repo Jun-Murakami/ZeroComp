@@ -17,6 +17,7 @@ namespace zc::id {
     //                  エンベロープ挙動 + 信号経路の色付け（サチュレーション）を切り替える。
     //                  ゼロレイテンシー原則を崩すような処理（lookahead / oversampling）は一切入れない。
     // - METERING_MODE: 0=Peak / 1=RMS / 2=Momentary
+    // - DISPLAY_MODE:  中央表示のモード（0=Metering / 1=Waveform、既定 Metering）
     const juce::ParameterID THRESHOLD    {"THRESHOLD",     1};
     const juce::ParameterID RATIO        {"RATIO",         1};
     const juce::ParameterID KNEE_DB      {"KNEE_DB",       1};
@@ -26,4 +27,5 @@ namespace zc::id {
     const juce::ParameterID AUTO_MAKEUP  {"AUTO_MAKEUP",   1};
     const juce::ParameterID MODE         {"MODE",          1};
     const juce::ParameterID METERING_MODE{"METERING_MODE", 1};
+    const juce::ParameterID DISPLAY_MODE {"DISPLAY_MODE",  1};
 }  // namespace zc::id

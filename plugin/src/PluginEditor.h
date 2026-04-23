@@ -41,6 +41,7 @@ private:
     juce::WebToggleButtonRelay webAutoMakeupRelay;
     juce::WebComboBoxRelay     webModeRelay;
     juce::WebComboBoxRelay     webMeteringModeRelay;
+    juce::WebComboBoxRelay     webDisplayModeRelay; // Metering / Waveform
 
     juce::WebSliderParameterAttachment       thresholdAttachment;
     juce::WebSliderParameterAttachment       ratioAttachment;
@@ -51,6 +52,7 @@ private:
     juce::WebToggleButtonParameterAttachment autoMakeupAttachment;
     juce::WebComboBoxParameterAttachment     modeAttachment;
     juce::WebComboBoxParameterAttachment     meteringModeAttachment;
+    juce::WebComboBoxParameterAttachment     displayModeAttachment;
 
     juce::WebControlParameterIndexReceiver controlParameterIndexReceiver;
 

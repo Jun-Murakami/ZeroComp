@@ -51,7 +51,9 @@ public:
     }
 
     // L/R をイン・プレース処理。戻り値は区間の最小ゲイン (= 最大 GR を linear で)。
-    float processStereoInPlace(float* L, float* R, int n) noexcept
+    //  gainOut != nullptr なら各サンプルで適用された gain（リニア, 0..1）を書き出す。
+    //  配列長は最低でも n 必要。
+    float processStereoInPlace(float* L, float* R, int n, float* gainOut = nullptr) noexcept
     {
         float minGain = 1.0f;
         if (! std::isfinite(envelopeDb)) envelopeDb = 0.0f;
@@ -106,6 +108,7 @@ public:
 
             L[i] = sL;
             R[i] = sR;
+            if (gainOut) gainOut[i] = g;
             if (g < minGain) minGain = g;
         }
         return minGain;

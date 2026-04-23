@@ -18,6 +18,10 @@ namespace zc_wasm {
 class DspEngine
 {
 public:
+    // 波形表示用スライスレート（plugin 側と揃える）
+    static constexpr double kWaveformSliceHz = 200.0;
+    static constexpr int    kWaveformRingSize = 2048; // ~10 秒ぶん
+
     void prepare(double sr, int maxBlock) noexcept
     {
         sampleRate = std::isfinite(sr) && sr > 0.0 ? sr : 48000.0;
@@ -26,6 +30,19 @@ public:
         compressor.prepare(sampleRate);
         momentaryIn .prepare(sampleRate, maxBlockSize);
         momentaryOut.prepare(sampleRate, maxBlockSize);
+
+        // 波形スライス準備（plugin と同じ 200 Hz）
+        waveformSliceSize = std::max(1, static_cast<int>(std::round(sampleRate / kWaveformSliceHz)));
+        waveformPeaks.assign(static_cast<size_t>(kWaveformRingSize), 0.0f);
+        waveformGrDb .assign(static_cast<size_t>(kWaveformRingSize), 0.0f);
+        waveformWriteIdx = 0;
+        waveformReadIdx  = 0;
+        waveformSliceSampleCount = 0;
+        waveformSlicePeakAccum   = 0.0f;
+        waveformSliceGrAccum     = 0.0f;
+
+        // per-sample gain スクラッチ
+        waveformGainScratch.assign(static_cast<size_t>(maxBlockSize), 1.0f);
 
         resetMeters();
     }
@@ -145,8 +162,20 @@ public:
             return;
         }
 
-        // --- 3) Compressor ---
-        const float minGain = compressor.processStereoInPlace(outL, outR, numSamples);
+        // 波形用に入力サンプル max(|L|,|R|) を事前キャッシュ（compressor が破壊する前）
+        if (static_cast<int>(waveformInputPeakScratch.size()) < numSamples)
+            waveformInputPeakScratch.resize(static_cast<size_t>(numSamples), 0.0f);
+        for (int i = 0; i < numSamples; ++i)
+            waveformInputPeakScratch[static_cast<size_t>(i)] = std::max(std::fabs(outL[i]), std::fabs(outR[i]));
+
+        // --- 3) Compressor（per-sample gain を scratch に取得）---
+        if (static_cast<int>(waveformGainScratch.size()) < numSamples)
+            waveformGainScratch.resize(static_cast<size_t>(numSamples), 1.0f);
+        float* gainPerSample = waveformGainScratch.data();
+        const float minGain = compressor.processStereoInPlace(outL, outR, numSamples, gainPerSample);
+
+        // 波形スライスに入力ピーク + per-sample gain を流す
+        accumWaveformSlices(waveformInputPeakScratch.data(), gainPerSample, numSamples);
 
         // --- 4) Auto Makeup + Output Gain（プラグイン側と同じ式）---
         const float autoMakeupDb = compressor.computeAutoMakeupDb();
@@ -211,6 +240,26 @@ public:
     {
         momentaryIn.reset();
         momentaryOut.reset();
+    }
+
+    // ====== 波形スライス取り出し（JS から pull）======
+    int getWaveformSlices(float* peaks, float* grDb, int maxN) noexcept
+    {
+        if (maxN <= 0 || !peaks || !grDb) return 0;
+        int count = 0;
+        while (count < maxN && waveformReadIdx != waveformWriteIdx)
+        {
+            peaks[count] = waveformPeaks[static_cast<size_t>(waveformReadIdx)];
+            grDb [count] = waveformGrDb [static_cast<size_t>(waveformReadIdx)];
+            waveformReadIdx = (waveformReadIdx + 1) % kWaveformRingSize;
+            ++count;
+        }
+        return count;
+    }
+
+    double getWaveformSliceHz() const noexcept
+    {
+        return sampleRate / static_cast<double>(std::max(1, waveformSliceSize));
     }
 
 private:
@@ -341,6 +390,41 @@ private:
         grDbAccum = 0.0f;
     }
 
+    // 入力サンプル + per-sample gain を slice にダウンサンプリングして内部リングに push。
+    //   peak    = slice 内の max(|L|,|R|) の最大
+    //   grDb    = per-sample gain から算出した slice 内最大リダクション（dB）
+    void accumWaveformSlices(const float* inputPeakPerSample, const float* perSampleGain, int n) noexcept
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const float mergedAbs = inputPeakPerSample[i];
+            if (mergedAbs > waveformSlicePeakAccum) waveformSlicePeakAccum = mergedAbs;
+
+            const float gLin = perSampleGain[i];
+            const float perSampleGrDb = (gLin >= 1.0f)
+                ? 0.0f
+                : -20.0f * std::log10(std::max(gLin, 1.0e-6f));
+            if (perSampleGrDb > waveformSliceGrAccum) waveformSliceGrAccum = perSampleGrDb;
+
+            if (++waveformSliceSampleCount >= waveformSliceSize)
+            {
+                const int nextWrite = (waveformWriteIdx + 1) % kWaveformRingSize;
+                if (nextWrite == waveformReadIdx)
+                {
+                    // 満杯 → 最古を 1 つ捨てる
+                    waveformReadIdx = (waveformReadIdx + 1) % kWaveformRingSize;
+                }
+                waveformPeaks[static_cast<size_t>(waveformWriteIdx)] = waveformSlicePeakAccum;
+                waveformGrDb [static_cast<size_t>(waveformWriteIdx)] = waveformSliceGrAccum;
+                waveformWriteIdx = nextWrite;
+
+                waveformSliceSampleCount = 0;
+                waveformSlicePeakAccum   = 0.0f;
+                waveformSliceGrAccum     = 0.0f;
+            }
+        }
+    }
+
     // state
     double sampleRate = 48000.0;
     int    maxBlockSize = 128;
@@ -376,6 +460,20 @@ private:
     float inRmsAccumL   = 0.0f, inRmsAccumR   = 0.0f;
     float outRmsAccumL  = 0.0f, outRmsAccumR  = 0.0f;
     float grDbAccum     = 0.0f;
+
+    // Waveform ring（Pro-L 風オシロ表示用）
+    std::vector<float> waveformPeaks;
+    std::vector<float> waveformGrDb;
+    int   waveformWriteIdx         = 0;
+    int   waveformReadIdx          = 0;
+    int   waveformSliceSize        = 240;
+    int   waveformSliceSampleCount = 0;
+    float waveformSlicePeakAccum   = 0.0f;
+    float waveformSliceGrAccum     = 0.0f;
+
+    // per-sample gain と入力ピークのスクラッチ（compressor に渡す / 波形集計に使う）
+    std::vector<float> waveformGainScratch;
+    std::vector<float> waveformInputPeakScratch;
 };
 
 } // namespace zc_wasm

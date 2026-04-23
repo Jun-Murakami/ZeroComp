@@ -211,6 +211,16 @@ export class WebAudioEngine
           },
           grDb: m.grDb,
         });
+
+        // 波形スライス（optional）
+        const wf = msg.waveform as { sliceHz?: number; peaks?: number[]; grDb?: number[] } | null | undefined;
+        if (wf && wf.peaks && wf.grDb && wf.peaks.length > 0) {
+          this.emit('waveformUpdate', {
+            sliceHz: wf.sliceHz,
+            peaks:   wf.peaks,
+            grDb:    wf.grDb,
+          });
+        }
         break;
       }
     }

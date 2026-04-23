@@ -77,6 +77,30 @@ ZeroCompAudioProcessor::ZeroCompAudioProcessor()
 
 ZeroCompAudioProcessor::~ZeroCompAudioProcessor() = default;
 
+void ZeroCompAudioProcessor::pushWaveformSample(float absPeakSample, float perSampleGainLin) noexcept
+{
+    if (absPeakSample > waveformSlicePeakAccum)
+        waveformSlicePeakAccum = absPeakSample;
+    if (perSampleGainLin < waveformSliceMinGainAccum)
+        waveformSliceMinGainAccum = perSampleGainLin;
+
+    if (++waveformSliceSampleCount >= waveformSliceSize)
+    {
+        // SPSC: 満杯時は黙って捨てる（30Hz で数十 slice しか消費しないため、2048 slot では現実にはあふれない）
+        int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+        waveformFifo.prepareToWrite(1, start1, size1, start2, size2);
+        if (size1 > 0)
+        {
+            waveformPeakBuffer   [static_cast<size_t>(start1)] = waveformSlicePeakAccum;
+            waveformMinGainBuffer[static_cast<size_t>(start1)] = waveformSliceMinGainAccum;
+            waveformFifo.finishedWrite(1);
+        }
+        waveformSliceSampleCount  = 0;
+        waveformSlicePeakAccum    = 0.0f;
+        waveformSliceMinGainAccum = 1.0f;
+    }
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout ZeroCompAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
@@ -153,6 +177,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroCompAudioProcessor::crea
         juce::StringArray{ "Peak", "RMS", "Momentary" },
         0));
 
+    // DISPLAY_MODE: 中央表示を Metering（従来の IN/GR/OUT + Curve）or Waveform（Pro-L 風オシロ）で切替。
+    //  UI のみの切替で DSP には影響しないが、プリセット保存・復帰を自然にするため APVTS で持つ。
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        zc::id::DISPLAY_MODE,
+        "Display Mode",
+        juce::StringArray{ "Metering", "Waveform" },
+        0));
+
     return { params.begin(), params.end() };
 }
 
@@ -191,7 +223,28 @@ void ZeroCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     inputMomentary.prepareToPlay(sampleRate, samplesPerBlock);
     outputMomentary.prepareToPlay(sampleRate, samplesPerBlock);
 
-    juce::ignoreUnused(samplesPerBlock);
+    // 波形表示用リングバッファ準備
+    const double sliceHz = kWaveformSliceHz;
+    waveformSliceSize = juce::jmax(1, static_cast<int>(std::round(sampleRate / sliceHz)));
+    waveformSliceHz.store(static_cast<float>(sampleRate / static_cast<double>(waveformSliceSize)),
+                           std::memory_order_relaxed);
+    if (static_cast<int>(waveformPeakBuffer.size()) != kWaveformFifoSize)
+    {
+        waveformPeakBuffer.assign(kWaveformFifoSize, 0.0f);
+        waveformMinGainBuffer.assign(kWaveformFifoSize, 1.0f);
+    }
+    else
+    {
+        std::fill(waveformPeakBuffer.begin(), waveformPeakBuffer.end(), 0.0f);
+        std::fill(waveformMinGainBuffer.begin(), waveformMinGainBuffer.end(), 1.0f);
+    }
+    waveformFifo.reset();
+    waveformSliceSampleCount  = 0;
+    waveformSlicePeakAccum    = 0.0f;
+    waveformSliceMinGainAccum = 1.0f;
+
+    // per-sample gain scratch（Compressor に渡す）
+    waveformGainScratch.assign(static_cast<size_t>(samplesPerBlock), 1.0f);
 }
 
 void ZeroCompAudioProcessor::releaseResources()
@@ -240,6 +293,18 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         juce::jlimit(0, 3, modeIdx)));
 
     // --- 入力メータ（Peak + RMS）---
+    //  波形表示用に入力サンプルの max(|L|,|R|) を事前に拾う（compressor が破壊する前）。
+    //  waveformPeakSnapshot[i] = max(|L[i]|, |R[i]|)
+    if (static_cast<int>(waveformGainScratch.size()) < numSamples)
+        waveformGainScratch.resize(static_cast<size_t>(numSamples), 1.0f);
+    // スクラッチを使って |L|,|R| の max もキャッシュ（compressor 後に gain と合わせて slice に流す）。
+    //  per-sample gain scratch と同じサイズなので、末尾セクションに peak を置く必要はない。
+    //  代わりに小さな静的配列はスタックを避けるため、別途 waveformGainScratch と同じ std::vector を使う発想もあるが、
+    //  1 ブロックぶんの temp は stack-allocated VLA 風に扱うのが安全。ここでは thread-local buffer を使う。
+    thread_local static std::vector<float> inputPeakPerSample;
+    if (static_cast<int>(inputPeakPerSample.size()) < numSamples)
+        inputPeakPerSample.resize(static_cast<size_t>(numSamples), 0.0f);
+
     {
         auto* l = buffer.getReadPointer(0);
         auto* r = buffer.getReadPointer(std::min(1, numChannels - 1));
@@ -252,6 +317,7 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             peakR = std::max(peakR, ar);
             sqL += l[i] * l[i];
             sqR += r[i] * r[i];
+            inputPeakPerSample[static_cast<size_t>(i)] = std::max(al, ar);
         }
         atomicMaxFloat(inPeakAccumL, peakL);
         atomicMaxFloat(inPeakAccumR, peakR);
@@ -262,8 +328,16 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     inputMomentary.processBlock(buffer);
 
     // --- コンプ本体 ---
-    const float minGain = compressor.processBlock(buffer);
+    //  per-sample gain を scratch に取得して後段の波形 slice 集計に使う。
+    //  （block-level の minGain を slice に流すと解像度が DAW のブロックサイズに依存してしまう）
+    float* gainPerSample = waveformGainScratch.data();
+    const float minGain = compressor.processBlock(buffer, gainPerSample);
     atomicMinFloat(minGainAccum, minGain);
+
+    // 波形表示: 入力ピーク + per-sample gain を slice に流す。
+    //  slice 内では peak の最大と gain の最小（= 最大リダクション）を集計する。
+    for (int i = 0; i < numSamples; ++i)
+        pushWaveformSample(inputPeakPerSample[static_cast<size_t>(i)], gainPerSample[i]);
 
     // --- 出力ゲイン / Auto Makeup ---
     //  Auto Makeup ON 時は threshold/ratio から自動算出した makeup を基本値として適用。

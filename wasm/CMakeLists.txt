@@ -35,6 +35,8 @@ if(EMSCRIPTEN)
         "_dsp_set_mode" "_dsp_set_metering_mode" "_dsp_set_bypass"
         # メイン処理 / メーター
         "_dsp_process_block" "_dsp_get_meter_data" "_dsp_reset_momentary"
+        # 波形表示（Pro-L / Pro-C 風オシロ）
+        "_dsp_get_waveform_slices" "_dsp_get_waveform_slice_hz"
     )
     list(JOIN EXPORTED_FUNCTIONS "," EXPORTED_FUNCTIONS_STR)
 

@@ -46,7 +46,9 @@ public:
 
     // ブロック処理（N チャネル対応）。
     // 戻り値は区間内の最大リダクション（リニア, 0..1, 1 = リダクション無し）
-    float processBlock(juce::AudioBuffer<float>& buffer) noexcept;
+    // gainOut != nullptr なら各サンプルで適用された gain（リニア, 0..1）を書き出す。
+    //  配列長は最低でも `buffer.getNumSamples()` 必要。
+    float processBlock(juce::AudioBuffer<float>& buffer, float* gainOut = nullptr) noexcept;
 
 private:
     // 入力 dB を GR（dB, 正値 = どれだけ下げるか）にマップする静的カーブ

@@ -8,6 +8,7 @@ import { ParameterFader } from './components/ParameterFader';
 import { HorizontalParameter } from './components/HorizontalParameter';
 import { ModeSelector } from './components/ModeSelector';
 import { RatioGraph } from './components/RatioGraph';
+import { WaveformView } from './components/WaveformView';
 import {
   GainReductionMeterBar,
   LevelMeterBar,
@@ -77,6 +78,20 @@ function App() {
 
   const { index: meterModeIndex, setIndex: setMeterModeIndexJuce } = useJuceComboBoxIndex('METERING_MODE');
   const meterMode: MeterMode = MODES[meterModeIndex] ?? 'peak';
+
+  // DISPLAY_MODE（0=Metering / 1=Waveform）。中央のビジュアル切替。
+  const { index: displayModeIndex, setIndex: setDisplayModeIndexJuce } = useJuceComboBoxIndex('DISPLAY_MODE');
+  const isWaveformMode = displayModeIndex === 1;
+  // Waveform モードに入る時は METERING_MODE を Peak(=0) にロック（右端の細い OUT バー用）。
+  //  Trigger は toggleDisplayMode ハンドラ（useEffect で値変化を監視しない方針）。
+  const toggleDisplayMode = () => {
+    const next = isWaveformMode ? 0 : 1;
+    setDisplayModeIndexJuce(next);
+    if (next === 1 && meterModeIndex !== 0) {
+      resetMetersForMode(0);
+      setMeterModeIndexJuce(0);
+    }
+  };
 
   const resetMetersForMode = (nextIndex: number) => {
     if (nextIndex === 2) {
@@ -167,11 +182,15 @@ function App() {
     return () => juceBridge.removeEventListener(id);
   }, []);
 
+  // ネイティブへの "ready" 通知（マウント時 1 回）。contextmenu listener とは別エフェクトに分離。
   useEffect(() => {
     juceBridge.whenReady(() => {
       juceBridge.callNative('system_action', 'ready');
     });
+  }, []);
 
+  // 右クリック抑制。入力系要素・明示 opt-in クラス・DEV モードは除外。
+  useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (!t) return;
@@ -191,18 +210,28 @@ function App() {
 
   const mainRef = useRef<HTMLDivElement | null>(null);
   const [mainSize, setMainSize] = useState<{ width: number; height: number }>({ width: 620, height: 280 });
+  // ウィンドウリサイズ中は WaveformView の描画を停止して負荷軽減（連続発火の debounce 検出）。
+  const [isResizing, setIsResizing] = useState(false);
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const w = entry.contentRect.width;
         const h = entry.contentRect.height;
         setMainSize((prev) => (prev.width !== w || prev.height !== h ? { width: w, height: h } : prev));
       }
+      // 連続発火中は true、最後の発火から 150ms 静寂になったら false
+      setIsResizing(true);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => setIsResizing(false), 150);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
   }, []);
 
   // 中央エリア（グラフ + メーター群）の 1 ハーフぶんのサイズ。
@@ -451,11 +480,10 @@ function App() {
                 />
               </Box>
 
-              {/* 中央: 左半分 = Graph、右半分 = メーター群（IN/GR/OUT）+ ボタン。
-                  両ハーフを flex: 1 で 50/50 分割。ウィンドウ幅を広げると両方が比例拡大。
-                  左半分の幅がメーター高さを超える場合、グラフは正方形のまま中央寄せで表示し、
-                  余白は左半分の内側で吸収する（バーの下端を切らせない）。
-                  モバイル時は order: 0 で行 1 を占有（flex-basis 100% で全幅）。faders は下段に折り返す。 */}
+              {/* 中央: Metering モード = 左半分 Graph + 右半分 メーター群
+                        Waveform モード = Waveform キャンバス(広く) + 薄い GR + 薄い OUT
+                  両モードとも flex: 1 で残りスペースを占有。Auto Makeup は両モードで左下に残す。
+                  position: relative にして Metering/Waveform トグルを内側中央上部に absolute 配置する。 */}
               <Box sx={{
                 display: 'flex',
                 flex: isMobile ? '1 1 100%' : 1,
@@ -463,8 +491,71 @@ function App() {
                 gap: 1,
                 alignItems: 'flex-start',
                 order: isMobile ? 0 : 1,
+                position: 'relative',
               }}>
-                {/* 左半分: グラフ領域（幅いっぱい × faderHeight）+ 直下に Auto Makeup トグル */}
+                {/* Metering / Waveform トグル（中央 flex Box の上部中央に浮かべる）。
+                    CURVE / WAVEFORM ラベルは 36px ヘッダの下端にあるので、top: 0 / height: 22 の
+                    トグルとは Y 方向で衝突しない（ラベルは y≈30、トグルは y=0..22）。 */}
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: 0,
+                    mt: -0.5,
+                    zIndex: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    userSelect: 'none',
+                  }}
+                >
+                  <Typography variant='caption' sx={{ fontSize: '0.7rem', lineHeight: 1, mr: 0.5 }}>
+                    Display Mode:
+                  </Typography>
+                  <Tooltip title='Metering (graph + meters) ⇔ Waveform (oscilloscope)' arrow>
+                    <Box
+                      onClick={toggleDisplayMode}
+                      role='button'
+                      aria-label='display mode'
+                      sx={{
+                        display: 'inline-flex',
+                        height: 22,
+                        borderRadius: 1,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        fontSize: '0.7rem',
+                        lineHeight: 1,
+                        backgroundColor: 'background.paper',
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          px: 0.75,
+                          display: 'flex',
+                          alignItems: 'center',
+                          backgroundColor: !isWaveformMode ? 'primary.main' : 'transparent',
+                          color: !isWaveformMode ? 'background.paper' : 'text.secondary',
+                        }}
+                      >
+                        Metering
+                      </Box>
+                      <Box
+                        sx={{
+                          px: 0.75,
+                          display: 'flex',
+                          alignItems: 'center',
+                          backgroundColor: isWaveformMode ? 'primary.main' : 'transparent',
+                          color: isWaveformMode ? 'background.paper' : 'text.secondary',
+                        }}
+                      >
+                        Waveform
+                      </Box>
+                    </Box>
+                  </Tooltip>
+                </Box>
+                {/* 左半分: グラフ or 波形キャンバス + 直下に Auto Makeup トグル。
+                    Waveform モードでは leftHalfRef で観測した幅をそのまま WaveformView の幅に使う。 */}
                 <Box
                   ref={leftHalfRef}
                   sx={{
@@ -475,15 +566,23 @@ function App() {
                     alignItems: 'center',
                   }}
                 >
-                  <RatioGraph
-                    thresholdDb={thresholdDbVal}
-                    ratio={ratioVal}
-                    kneeDb={kneeDbVal}
-                    inputDb={graphInDb}
-                    makeupDb={makeupDbDisplay}
-                    width={graphW}
-                    height={graphH}
-                  />
+                  {isWaveformMode ? (
+                    <WaveformView
+                      width={graphW}
+                      height={graphH}
+                      isResizing={isResizing}
+                    />
+                  ) : (
+                    <RatioGraph
+                      thresholdDb={thresholdDbVal}
+                      ratio={ratioVal}
+                      kneeDb={kneeDbVal}
+                      inputDb={graphInDb}
+                      makeupDb={makeupDbDisplay}
+                      width={graphW}
+                      height={graphH}
+                    />
+                  )}
                   {/* 右半分のメーター群には hold 行 (mt:0.5 + height:14 = 18px) があるぶん、
                       左半分にも同じスペーサーを挟んで Auto Makeup ボタンを Peak ボタンと同じ Y に揃える。 */}
                   <Box sx={{ mt: 0.5, height: 14, flexShrink: 0 }} />
@@ -514,17 +613,53 @@ function App() {
                   </Tooltip>
                 </Box>
 
-                {/* 右半分: メーター群。バーを右半分の幅いっぱいに広げる。 */}
+                {/* 右半分: Metering モード = メーター群（IN/GR/OUT）+ Peak ボタン
+                           Waveform モード = 薄い GR + 薄い OUT（IN は波形で表現されるので省略）
+                                            Peak ボタンは非表示（METERING_MODE は Peak にロック） */}
                 <Box
                   ref={rightHalfRef}
                   sx={{
-                    flex: 1,
+                    flex: isWaveformMode ? '0 0 auto' : 1,
                     minWidth: 0,
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                   }}
                 >
+                  {isWaveformMode ? (
+                    // Waveform モード: 薄い GR + 薄い OUT のみ
+                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'flex-start' }}>
+                      {/* 薄い GR */}
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <GainReductionMeterBar grDb={grDb} width={18} height={faderHeight} compact />
+                        <Tooltip title='Reset Hold'>
+                          <Box
+                            onClick={resetGrHold}
+                            sx={{ mt: 0.5, height: 14, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', cursor: 'pointer', userSelect: 'none' }}
+                          >
+                            <Typography variant='caption' sx={{ fontSize: '9px', width: 18, textAlign: 'center', lineHeight: 1 }}>
+                              -{grHold.toFixed(1)}
+                            </Typography>
+                          </Box>
+                        </Tooltip>
+                      </Box>
+                      {/* 薄い OUT (merged L/R) */}
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <LevelMeterBar level={Math.max(outL, outR)} label='OUT' width={18} height={faderHeight} />
+                        <Tooltip title='Reset Hold'>
+                          <Box
+                            onClick={resetOutHold}
+                            sx={{ mt: 0.5, height: 14, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', cursor: 'pointer', userSelect: 'none' }}
+                          >
+                            <Typography variant='caption' sx={{ fontSize: '9px', width: 18, textAlign: 'center', lineHeight: 1 }}>
+                              {formatDb(Math.max(outHold.left, outHold.right))}
+                            </Typography>
+                          </Box>
+                        </Tooltip>
+                      </Box>
+                    </Box>
+                  ) : (
+                  <>
                   <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'flex-start' }}>
                     {/* IN */}
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -692,7 +827,7 @@ function App() {
                     </Box>
                   </Box>
 
-                  {/* メーター群の真下中央にモード切替ボタン */}
+                  {/* メーター群の真下中央にモード切替ボタン（Waveform モード時は非表示） */}
                   <Tooltip title='Meter display mode' arrow>
                     <Button
                       onClick={cycleMeterMode}
@@ -717,6 +852,8 @@ function App() {
                       {MODE_LABEL[meterMode]}
                     </Button>
                   </Tooltip>
+                  </>
+                  )}
                 </Box>
               </Box>
 

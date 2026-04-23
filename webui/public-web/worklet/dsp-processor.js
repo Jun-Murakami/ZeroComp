@@ -19,6 +19,13 @@ class DspProcessor extends AudioWorkletProcessor {
     this.renderBufferFrames = 0;
     this.heapF32 = null;
 
+    // 波形スライス用の pull バッファ（optional）
+    this.waveformMaxPerPull = 256;
+    this.waveformPeaksPtr = 0;
+    this.waveformGrDbPtr  = 0;
+    this.waveformAvailable = false;
+    this.waveformSliceHz = 200;
+
     this.updateCounter = 0;
 
     this.port.onmessage = (e) => this.handleMessage(e.data);
@@ -112,6 +119,17 @@ class DspProcessor extends AudioWorkletProcessor {
       if (!this.ensureRenderBufferCapacity(INITIAL_RENDER_FRAMES) || !this.meterBufPtr) {
         throw new Error('WASM audio buffer allocation failed');
       }
+
+      // 波形 API は古い wasm には無いので optional 扱い
+      if (typeof this.wasm.dsp_get_waveform_slices === 'function') {
+        this.waveformPeaksPtr = this.wasm.dsp_alloc_buffer(this.waveformMaxPerPull);
+        this.waveformGrDbPtr  = this.wasm.dsp_alloc_buffer(this.waveformMaxPerPull);
+        this.waveformAvailable = !!(this.waveformPeaksPtr && this.waveformGrDbPtr);
+        if (this.waveformAvailable && typeof this.wasm.dsp_get_waveform_slice_hz === 'function') {
+          this.waveformSliceHz = this.wasm.dsp_get_waveform_slice_hz() || 200;
+        }
+      }
+
       this.refreshHeapView();
 
       this.wasmReady = true;
@@ -186,6 +204,26 @@ class DspProcessor extends AudioWorkletProcessor {
       const mh = this.heapF32;
       const mo = this.meterBufPtr / 4;
 
+      // 波形スライスをドレイン（optional）
+      let waveformPayload = null;
+      if (this.waveformAvailable) {
+        const got = this.wasm.dsp_get_waveform_slices(
+          this.waveformPeaksPtr,
+          this.waveformGrDbPtr,
+          this.waveformMaxPerPull,
+        );
+        if (got > 0) {
+          this.refreshHeapView();
+          const peaksView = new Float32Array(this.wasmMemory.buffer, this.waveformPeaksPtr, got);
+          const grDbView  = new Float32Array(this.wasmMemory.buffer, this.waveformGrDbPtr,  got);
+          waveformPayload = {
+            sliceHz: this.waveformSliceHz,
+            peaks:   Array.from(peaksView),
+            grDb:    Array.from(grDbView),
+          };
+        }
+      }
+
       this.port.postMessage({
         type: 'state-update',
         position: this.wasm.dsp_get_position(),
@@ -206,6 +244,7 @@ class DspProcessor extends AudioWorkletProcessor {
           outMomentary:   mh[mo + 10],
           grDb:           mh[mo + 11],
         },
+        waveform: waveformPayload,
       });
     }
 

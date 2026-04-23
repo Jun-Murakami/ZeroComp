@@ -4,6 +4,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
+#include <vector>
 
 #include "ParameterIDs.h"
 #include "dsp/Compressor.h"
@@ -53,6 +54,31 @@ public:
 
     zc::dsp::MomentaryProcessor inputMomentary;
     zc::dsp::MomentaryProcessor outputMomentary;
+
+    // ================= Waveform display (Pro-L / Pro-C 風オシロ表示) =================
+    //  - 入力側の |L|,|R| マージ済みサンプルを slice（約 200 Hz）単位にダウンサンプルし、
+    //    per-sample gain（Compressor から取得）の slice 内最小値と一緒にリングバッファへ push。
+    //  - audio → UI は AbstractFifo で wait-free に受け渡し。
+    //  - 5〜7 秒表示でも余裕を持つため 2048 slot（200Hz × ~10s）。
+    static constexpr int kWaveformFifoSize   = 2048;
+    static constexpr double kWaveformSliceHz = 200.0;
+    juce::AbstractFifo waveformFifo{ kWaveformFifoSize };
+    std::vector<float> waveformPeakBuffer;      // size = kWaveformFifoSize
+    std::vector<float> waveformMinGainBuffer;   // size = kWaveformFifoSize
+    int   waveformSliceSize         = 220;      // prepare 時に sampleRate/200 で設定
+    int   waveformSliceSampleCount  = 0;        // audio thread のみ
+    float waveformSlicePeakAccum    = 0.0f;     // audio thread のみ
+    float waveformSliceMinGainAccum = 1.0f;     // audio thread のみ
+
+    // UI 側が slice rate を描画スケールに使う（ほぼ 200 Hz 固定だが念のため）
+    std::atomic<float> waveformSliceHz{ static_cast<float>(kWaveformSliceHz) };
+
+    // audio thread から呼ばれる：1 サンプル相当の入力ピーク / per-sample gain を slice に積む。
+    void pushWaveformSample(float absPeakSample, float perSampleGainLin) noexcept;
+
+    // processBlock で使うスクラッチ（compressor の per-sample gain を受ける）。
+    //  prepare で maxBlockSize ぶん事前確保、processBlock 中は追加 alloc しない。
+    std::vector<float> waveformGainScratch;
 
 private:
     juce::AudioProcessorValueTreeState parameters;

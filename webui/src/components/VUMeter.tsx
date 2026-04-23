@@ -106,10 +106,11 @@ export const LevelMeterBar: React.FC<{ level: number; label: string; width?: num
 const GR_MAX_DB = 30; // 表示上限（フェーダー側と揃える）
 const grToUnit = (grDb: number): number => Math.max(0, Math.min(1, grDb / GR_MAX_DB));
 
-export const GainReductionMeterBar: React.FC<{ grDb: number; width?: number; height?: number }> = ({
+export const GainReductionMeterBar: React.FC<{ grDb: number; width?: number; height?: number; compact?: boolean }> = ({
   grDb,
   width,
   height,
+  compact = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cssW = width ?? DEFAULT_BAR_WIDTH * 2;
@@ -137,37 +138,48 @@ export const GainReductionMeterBar: React.FC<{ grDb: number; width?: number; hei
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, cssW, barHeight);
 
-    // 数値の両脇に水平線を引く ("—— -24 ——")。Threshold/Output フェーダーの目盛りと揃える。
-    // 0 と -30 は省略（端点は描かない）。
-    ctx.font = '9px sans-serif';
-    const tickColor = 'rgba(255,255,255,0.28)';
-    ctx.fillStyle = tickColor;
-    ctx.strokeStyle = tickColor;
-    ctx.lineWidth = 1;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const centerX = cssW / 2;
-    [3, 6, 9, 12, 18, 24].forEach((db) => {
-      const y = grToUnit(db) * cssH;
-      const labelText = `-${db}`;
-      const textWidth = Math.ceil(ctx.measureText(labelText).width);
-      const halfGap = textWidth / 2 + 3; // 文字幅 + 両脇 3px の余白
+    // compact: Waveform モードの細い GR バー用。ラベル省略、左端から短いチックのみ。
+    // 通常: 数値の両脇に水平線を引く。0 と -30 は省略。
+    if (compact) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = 0.5;
+      [3, 6, 9, 12, 18, 24].forEach((db) => {
+        const y = grToUnit(db) * cssH;
+        const ya = crisp(y, dpr);
+        ctx.beginPath();
+        ctx.moveTo(0, ya);
+        ctx.lineTo(cssW * 0.35, ya);
+        ctx.stroke();
+      });
+    } else {
+      ctx.font = '9px sans-serif';
+      const tickColor = 'rgba(255,255,255,0.28)';
+      ctx.fillStyle = tickColor;
+      ctx.strokeStyle = tickColor;
+      ctx.lineWidth = 1;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const centerX = cssW / 2;
+      [3, 6, 9, 12, 18, 24].forEach((db) => {
+        const y = grToUnit(db) * cssH;
+        const labelText = `-${db}`;
+        const textWidth = Math.ceil(ctx.measureText(labelText).width);
+        const halfGap = textWidth / 2 + 3;
 
-      const ya = crisp(y, dpr);
-      // 左セグメント（左端 〜 文字の直前）
-      ctx.beginPath();
-      ctx.moveTo(0, ya);
-      ctx.lineTo(centerX - halfGap, ya);
-      ctx.stroke();
-      // 右セグメント（文字の直後 〜 右端）
-      ctx.beginPath();
-      ctx.moveTo(centerX + halfGap, ya);
-      ctx.lineTo(cssW, ya);
-      ctx.stroke();
+        const ya = crisp(y, dpr);
+        ctx.beginPath();
+        ctx.moveTo(0, ya);
+        ctx.lineTo(centerX - halfGap, ya);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(centerX + halfGap, ya);
+        ctx.lineTo(cssW, ya);
+        ctx.stroke();
 
-      ctx.fillText(labelText, centerX, y);
-    });
-  }, [grDb, cssW, cssH]);
+        ctx.fillText(labelText, centerX, y);
+      });
+    }
+  }, [grDb, cssW, cssH, compact]);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>

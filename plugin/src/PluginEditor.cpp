@@ -186,6 +186,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
       webAutoMakeupRelay   { zc::id::AUTO_MAKEUP.getParamID() },
       webModeRelay         { zc::id::MODE.getParamID() },
       webMeteringModeRelay { zc::id::METERING_MODE.getParamID() },
+      webDisplayModeRelay  { zc::id::DISPLAY_MODE.getParamID() },
       thresholdAttachment    { *p.getState().getParameter(zc::id::THRESHOLD.getParamID()),     webThresholdRelay,    nullptr },
       ratioAttachment        { *p.getState().getParameter(zc::id::RATIO.getParamID()),         webRatioRelay,        nullptr },
       kneeAttachment         { *p.getState().getParameter(zc::id::KNEE_DB.getParamID()),       webKneeRelay,         nullptr },
@@ -195,6 +196,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
       autoMakeupAttachment   { *p.getState().getParameter(zc::id::AUTO_MAKEUP.getParamID()),   webAutoMakeupRelay,   nullptr },
       modeAttachment         { *p.getState().getParameter(zc::id::MODE.getParamID()),          webModeRelay,         nullptr },
       meteringModeAttachment { *p.getState().getParameter(zc::id::METERING_MODE.getParamID()), webMeteringModeRelay, nullptr },
+      displayModeAttachment  { *p.getState().getParameter(zc::id::DISPLAY_MODE.getParamID()),  webDisplayModeRelay,  nullptr },
       webView{
           // ProTools Windows 等、DPI 非対応ホストで WebView2 の自動スケーリングを抑止する
           makeWebViewOptionsWithPreLaunchArgs(p)
@@ -219,6 +221,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
               .withOptionsFrom(webAutoMakeupRelay)
               .withOptionsFrom(webModeRelay)
               .withOptionsFrom(webMeteringModeRelay)
+              .withOptionsFrom(webDisplayModeRelay)
               .withNativeFunction(
                   juce::Identifier{"system_action"},
                   [this](const juce::Array<juce::var>& args,
@@ -526,4 +529,45 @@ void ZeroCompAudioProcessorEditor::timerCallback()
     meter->setProperty("grDb",   grDb);
 
     webView.emitEventIfBrowserIsVisible("meterUpdate", meter.get());
+
+    // ---- Waveform display: FIFO からドレインしてまとめて emit ----
+    //  audio thread が 200 Hz で slice を貯めている。30 Hz タイマーなら毎フレーム数 slice 受け取る想定。
+    {
+        auto& fifo = audioProcessor.waveformFifo;
+        const int available = fifo.getNumReady();
+        if (available > 0)
+        {
+            int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+            fifo.prepareToRead(available, start1, size1, start2, size2);
+
+            juce::Array<juce::var> peaks;
+            juce::Array<juce::var> grDbs;
+            peaks.ensureStorageAllocated(available);
+            grDbs.ensureStorageAllocated(available);
+
+            auto push = [&peaks, &grDbs, this](int start, int size)
+            {
+                for (int i = 0; i < size; ++i)
+                {
+                    const int idx = start + i;
+                    const float peak = audioProcessor.waveformPeakBuffer   [static_cast<size_t>(idx)];
+                    const float gLin = audioProcessor.waveformMinGainBuffer[static_cast<size_t>(idx)];
+                    peaks.add(juce::var{ static_cast<double>(peak) });
+                    const double grDbLocal = (gLin >= 1.0f)
+                                                 ? 0.0
+                                                 : -static_cast<double>(juce::Decibels::gainToDecibels(gLin, -60.0f));
+                    grDbs.add(juce::var{ grDbLocal });
+                }
+            };
+            push(start1, size1);
+            push(start2, size2);
+            fifo.finishedRead(size1 + size2);
+
+            juce::DynamicObject::Ptr wf { new juce::DynamicObject{} };
+            wf->setProperty("sliceHz", static_cast<double>(audioProcessor.waveformSliceHz.load(std::memory_order_relaxed)));
+            wf->setProperty("peaks", peaks);
+            wf->setProperty("grDb",  grDbs);
+            webView.emitEventIfBrowserIsVisible("waveformUpdate", wf.get());
+        }
+    }
 }

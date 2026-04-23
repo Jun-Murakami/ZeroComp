@@ -11,6 +11,7 @@ A **zero-latency** feedforward compressor for broadcast, streaming, and live pro
 - **Auto Makeup** — one-click half-compensation `-threshold × (1 - 1/ratio) × 0.5`. Keeps perceived loudness up without crushing peaks to the ceiling. Output Gain still works on top as a ± trim.
 - **Real-time transfer curve graph** — the center panel shows the static IN→OUT curve; the current input level appears as a blue dot riding along the curve. Auto Makeup shifts the curve up live.
 - **Three-mode metering** — Input L/R, Gain Reduction, Output L/R with Peak / RMS / Momentary LKFS (ITU-R BS.1770-4) switchable from a single button.
+- **Waveform display mode** — Oscilloscope (~7 sec scrollback): input envelope, threshold line, and per-sample gain-reduction reflection. Switch on the fly from the Metering / Waveform toggle in the title bar.
 - **Stereo-linked gain** — L/R share the same gain envelope (computed from `max(|L|,|R|)`) so the stereo image stays intact.
 - **Mobile-friendly WebAssembly demo** — the same compressor DSP runs in the browser via an `AudioWorklet`; the UI collapses into a phone-friendly single-column layout on narrow viewports.
 
@@ -124,7 +125,8 @@ At 640 px or narrower, the web UI rearranges itself: graph + meters on top, the 
 | `OUTPUT_GAIN`   | float (dB)           | -24 .. +24                     | 0 dB     | Post-compression trim. Stays active when Auto Makeup is on (adds on top as ± trim).       |
 | `AUTO_MAKEUP`   | bool                 | off / on                       | off      | Half-compensation makeup: `-threshold × (1 - 1/ratio) × 0.5`. Displayed on the curve too. |
 | `MODE`          | choice               | VCA / Opto / FET / Vari-Mu     | VCA      | Envelope behaviour + post-gain saturation character.                                      |
-| `METERING_MODE` | choice               | Peak / RMS / Momentary         | Peak     | Display mode for IN / OUT meters.                                                         |
+| `METERING_MODE` | choice               | Peak / RMS / Momentary         | Peak     | Display mode for IN / OUT meters. Forced to Peak in Waveform view.                         |
+| `DISPLAY_MODE`  | choice               | Metering / Waveform            | Metering | Center-panel visual: transfer curve + meters vs. oscilloscope waveform.                    |
 
 ## DSP details
 
@@ -155,6 +157,19 @@ makeup_dB = -threshold × (1 - 1/ratio) × 0.5
 ```
 
 Half of the full compensation that would bring a 0 dBFS peak exactly back to 0 dBFS. Keeps perceived loudness up while leaving a few dB of headroom. `OUTPUT_GAIN` is summed on top, so users can still trim ±24 dB around the makeup.
+
+## Waveform display mode
+
+The center panel can be toggled between the transfer-curve / meter layout and oscilloscope view via the `Metering / Waveform` switch at the top of the plugin window.
+
+- **Waveform envelope (cyan)** — pre-compressor input peaks, merged L/R absolute value, downsampled to 200 Hz slices (~5 ms/slice) and scrolled right-to-left over a 7-second window.
+- **Threshold line (white, dashed)** — horizontal indicator that tracks the current Threshold parameter (clamped to the visible -60..0 dB range).
+- **Above-threshold region (light gray)** — the portion of the virtual input envelope that would cross threshold. Rendered as a muted overlay.
+- **Gain-reduction reflection (red)** — mirrored below the threshold line in real-time. Depth at each slice is the *actual* per-sample gain the compressor applied, so the envelope faithfully reflects attack/release behaviour — including Opto LDR memory.
+- **Right-side strip** — a thin GR bar and a single merged-L/R OUT meter remain visible so level and reduction can still be read at a glance. Metering mode is pinned to Peak here.
+- **Performance** — canvas drawing is paused during window resize to keep drag interactions smooth; it resumes automatically once the ResizeObserver settles.
+
+Internally the compressor writes per-sample gain to a scratch buffer that is then aggregated into slices, so the visualization resolution is decoupled from the DAW's block size.
 
 ## Latency verification
 

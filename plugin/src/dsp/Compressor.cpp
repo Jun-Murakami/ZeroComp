@@ -132,7 +132,7 @@ namespace {
     }
 }
 
-float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
+float Compressor::processBlock(juce::AudioBuffer<float>& buffer, float* gainOut) noexcept
 {
     const int numChannels = buffer.getNumChannels();
     const int numSamples  = buffer.getNumSamples();
@@ -160,6 +160,9 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
     const float variMuDrive = (mode == Mode::VariMu) ? 0.6f : 0.0f;
 
     constexpr float kMinAbs = 1.0e-6f;  // -120 dBFS 以下は 0 扱い
+
+    // per-sample gain 出力用のサンプルインデックス。lambda からキャプチャする。
+    int sampleIdx = 0;
 
     auto step = [&](float& sampleL, float& sampleR) noexcept
     {
@@ -216,6 +219,7 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
             sampleR = variMuSaturate(sampleR, variMuDrive);
         }
 
+        if (gainOut) gainOut[sampleIdx] = g;
         if (g < minGain) minGain = g;
     };
 
@@ -224,6 +228,7 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
         auto* ch = buffer.getWritePointer(0);
         for (int i = 0; i < numSamples; ++i)
         {
+            sampleIdx = i;
             float l = ch[i];
             float r = l;
             step(l, r);
@@ -237,6 +242,7 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
 
     for (int i = 0; i < numSamples; ++i)
     {
+        sampleIdx = i;
         float l = left[i];
         float r = right[i];
         step(l, r);
