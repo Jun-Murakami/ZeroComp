@@ -16,6 +16,7 @@ import {
   formatLkfs,
 } from './components/VUMeter';
 import { useHostShortcutForwarding } from './hooks/useHostShortcutForwarding';
+import { useGlobalZoomGuard } from './hooks/useGlobalZoomGuard';
 import { GlobalDialog } from './components/GlobalDialog';
 import LicenseDialog from './components/LicenseDialog';
 import { WebTransportBar } from './components/WebTransportBar';
@@ -37,6 +38,7 @@ const MODE_LABEL: Record<MeterMode, string> = {
 
 function App() {
   useHostShortcutForwarding();
+  useGlobalZoomGuard();
 
   // スマホ幅（~640px 以下）を検出。プラグイン版は常に desktop レイアウトなので、Web デモ時だけ効かせる。
   //  mobile レイアウトでは:

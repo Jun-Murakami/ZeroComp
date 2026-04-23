@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Input, Slider, Typography,useMediaQuery, useTheme } from '@mui/material';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
+import { useFineAdjustPointer } from '../hooks/useFineAdjustPointer';
+import { useNumberInputAdjust } from '../hooks/useNumberInputAdjust';
 
 type SkewKind = 'linear' | 'log';
 
@@ -71,7 +73,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const direction = -e.deltaY > 0 ? 1 : -1;
-      const normStep = e.shiftKey ? 0.002 : 0.01;
+      const fine = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
+      const normStep = fine ? 0.002 : 0.01;
       const cur = valueToNorm(valueRef.current, min, max, skew);
       applyValue(normToValue(cur + normStep * direction, min, max, skew));
     };
@@ -80,18 +83,46 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [min, max, skew]);
 
-  // Ctrl/Cmd + クリックのデフォルト値リセットは、キャプチャフェーズで最優先に処理する。
-  //  MUI Slider の onMouseDown にバブルさせてしまうと、その直後のわずかなポインタ移動で
-  //  onChange が発火してリセット値が上書きされる（= 効いたり効かなかったりの原因）。
-  //  capture + stopImmediatePropagation で MUI に届く前に完全に握り潰す。
-  const handleResetCapture = (e: React.MouseEvent | React.PointerEvent) => {
-    if ((e.ctrlKey || e.metaKey) && defaultValue !== undefined) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.nativeEvent.stopImmediatePropagation();
-      applyValue(defaultValue);
-    }
-  };
+  // 修飾キー + ポインタ操作：
+  //  Ctrl/Cmd + クリック      → defaultValue にリセット
+  //  (Ctrl/Cmd/Shift) + ドラッグ → 微調整モード（正規化空間で 1px = 0.002）
+  //  修飾キーなし              → MUI Slider の通常ドラッグに委譲
+  const fineDragStartNormRef = useRef<number>(0);
+  const handlePointerDownCapture = useFineAdjustPointer({
+    orientation: 'horizontal',
+    onReset: () => {
+      if (defaultValue !== undefined) applyValue(defaultValue);
+    },
+    onDragStart: () => {
+      fineDragStartNormRef.current = valueToNorm(valueRef.current, min, max, skew);
+      sliderState?.sliderDragStarted();
+    },
+    onDragDelta: (deltaPx) => {
+      // 1px = 0.002 norm。log/linear 共通。0..1 を 500px で横断。
+      applyValue(normToValue(fineDragStartNormRef.current + deltaPx * 0.002, min, max, skew));
+    },
+    onDragEnd: () => sliderState?.sliderDragEnded(),
+  });
+
+  // 数値入力欄のホイール / 縦ドラッグ
+  const inputElRef = useRef<HTMLInputElement | null>(null);
+  const inputDragStartNormRef = useRef<number>(0);
+  useNumberInputAdjust(inputElRef, {
+    onWheelStep: (direction, fine) => {
+      const normStep = fine ? 0.002 : 0.01;
+      const cur = valueToNorm(valueRef.current, min, max, skew);
+      applyValue(normToValue(cur + normStep * direction, min, max, skew));
+    },
+    onDragStart: () => {
+      inputDragStartNormRef.current = valueToNorm(valueRef.current, min, max, skew);
+      sliderState?.sliderDragStarted();
+    },
+    onDragDelta: (deltaY, fine) => {
+      const normStep = fine ? 0.002 : 0.01;
+      applyValue(normToValue(inputDragStartNormRef.current + deltaY * normStep, min, max, skew));
+    },
+    onDragEnd: () => sliderState?.sliderDragEnded(),
+  });
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -123,8 +154,7 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
           ラベル位置がズレることがあるため、ラベルはオーバーレイで自分で描画する。 */}
       <Box
         ref={wheelRef}
-        onMouseDownCapture={handleResetCapture}
-        onPointerDownCapture={handleResetCapture}
+        onPointerDownCapture={handlePointerDownCapture}
         sx={{
           position: 'relative',
           display: 'flex',
@@ -219,6 +249,7 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
         <Input
           className='block-host-shortcuts'
+          inputRef={inputElRef}
           value={displayInput}
           onChange={(e) => setInputText(e.target.value)}
           onFocus={() => {

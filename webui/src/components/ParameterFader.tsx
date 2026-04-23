@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Box, Input, Slider, Typography } from '@mui/material';
 import { darken, lighten, styled } from '@mui/material/styles';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
+import { useFineAdjustPointer } from '../hooks/useFineAdjustPointer';
+import { useNumberInputAdjust } from '../hooks/useNumberInputAdjust';
 
 type SkewKind = 'linear' | 'log';
 
@@ -206,18 +208,40 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
     if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
   };
 
-  // Ctrl/Cmd + クリックのデフォルト値リセットは、キャプチャフェーズで最優先に処理する。
-  //  MUI Slider の onMouseDown にバブルさせてしまうと、その直後のわずかなポインタ移動で
-  //  onChange が発火してリセット値が上書きされる（= 効いたり効かなかったりの原因）。
-  //  capture + stopImmediatePropagation で MUI に届く前に完全に握り潰す。
-  const handleResetCapture = (e: React.MouseEvent | React.PointerEvent) => {
-    if ((e.ctrlKey || e.metaKey) && defaultValue !== undefined) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.nativeEvent.stopImmediatePropagation();
-      applyValue(defaultValue);
-    }
-  };
+  // 修飾キー + ポインタ操作：
+  //  Ctrl/Cmd + クリック      → defaultValue にリセット
+  //  (Ctrl/Cmd/Shift) + ドラッグ → 微調整モード（log/linear 両対応）
+  //  修飾キーなし              → MUI Slider の通常ドラッグに委譲
+  //
+  // MUI Slider の onMouseDown は内部で pointerdown を直接扱うため、capture 相 +
+  // stopImmediatePropagation で先取りしないと MUI に食われる。
+  const fineDragStartRef = useRef<{ value: number; norm: number }>({ value: 0, norm: 0 });
+  const handlePointerDownCapture = useFineAdjustPointer({
+    orientation: 'vertical',
+    onReset: () => {
+      if (defaultValue !== undefined) applyValue(defaultValue);
+    },
+    onDragStart: () => {
+      fineDragStartRef.current = {
+        value: valueRef.current,
+        norm: valueToNorm(valueRef.current, min, max, skew),
+      };
+      sliderState?.sliderDragStarted();
+    },
+    onDragDelta: (deltaPx) => {
+      // vertical なので deltaPx は「上方向が正」。inverted 時は最大値を上に置くため反転させる。
+      const signed = inverted ? -deltaPx : deltaPx;
+      if (skew === 'log') {
+        // log 軸は正規化空間で動かす（1px = 0.003 norm）。全域 0..1 を 330px で横断。
+        const nextNorm = fineDragStartRef.current.norm + signed * 0.003;
+        applyValue(normToValue(nextNorm, min, max, skew));
+      } else {
+        // linear は値空間で直接（1px = wheelStepFine）
+        applyValue(fineDragStartRef.current.value + signed * wheelStepFine);
+      }
+    },
+    onDragEnd: () => sliderState?.sliderDragEnded(),
+  });
 
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -229,7 +253,8 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
       //  inverted のフェーダーでは上 = 小さい値なので、方向を反転させる。
       const visualUp = -event.deltaY > 0 ? 1 : -1;
       const direction = inverted ? -visualUp : visualUp;
-      const step = event.shiftKey ? wheelStepFine : wheelStep;
+      const fine = event.shiftKey || event.ctrlKey || event.metaKey || event.altKey;
+      const step = fine ? wheelStepFine : wheelStep;
       if (skew === 'log') {
         const normStep = step / 100;
         const curNorm = valueToNorm(valueRef.current, min, max, skew);
@@ -244,6 +269,44 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [min, max, wheelStep, wheelStepFine, skew, inverted]);
+
+  // 数値入力欄のホイール / 縦ドラッグ
+  //   inverted フェーダー（RATIO など：上が min / 下が max）では、フェーダー操作の
+  //   視覚方向と値の増減が反転している。入力欄のホイール上 / 上方向ドラッグは
+  //   「フェーダーを上方向に動かしたとき」と同じ値の動きに揃える（= inverted 時は値が減る）。
+  const inputElRef = useRef<HTMLInputElement | null>(null);
+  const inputDragStartRef = useRef<{ value: number; norm: number }>({ value: 0, norm: 0 });
+  useNumberInputAdjust(inputElRef, {
+    onWheelStep: (direction, fine) => {
+      const signedDir = inverted ? -direction : direction;
+      const step = fine ? wheelStepFine : wheelStep;
+      if (skew === 'log') {
+        const normStep = step / 100;
+        const curNorm = valueToNorm(valueRef.current, min, max, skew);
+        applyValue(normToValue(curNorm + normStep * signedDir, min, max, skew));
+      } else {
+        applyValue(valueRef.current + step * signedDir);
+      }
+    },
+    onDragStart: () => {
+      inputDragStartRef.current = {
+        value: valueRef.current,
+        norm: valueToNorm(valueRef.current, min, max, skew),
+      };
+      sliderState?.sliderDragStarted();
+    },
+    onDragDelta: (deltaY, fine) => {
+      const signedDelta = inverted ? -deltaY : deltaY;
+      if (skew === 'log') {
+        const normStep = fine ? 0.003 : 0.01;
+        applyValue(normToValue(inputDragStartRef.current.norm + signedDelta * normStep, min, max, skew));
+      } else {
+        const step = fine ? wheelStepFine : wheelStep;
+        applyValue(inputDragStartRef.current.value + signedDelta * step);
+      }
+    },
+    onDragEnd: () => sliderState?.sliderDragEnded(),
+  });
 
   // Auto Makeup ON 時など、フェーダー本体だけ薄くして操作不可に。ラベルは通常表示のまま残す
   //   （OUTPUT 等の色は状態を示す重要な情報なので、disabled でも維持）。
@@ -280,8 +343,7 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
         <Box
           sx={{ position: 'relative', display: 'flex', alignItems: 'center' }}
           ref={wheelRef}
-          onMouseDownCapture={handleResetCapture}
-          onPointerDownCapture={handleResetCapture}
+          onPointerDownCapture={handlePointerDownCapture}
         >
           <StyledSlider
             value={sliderPosFromValue(value)}
@@ -347,6 +409,7 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
       <Box sx={{ display: 'flex', alignItems: 'center', mt: '10px', ...controlDimSx }}>
         <StyledInput
           className='block-host-shortcuts'
+          inputRef={inputElRef}
           value={displayInput}
           onChange={handleInputChange}
           onFocus={handleInputFocus}
