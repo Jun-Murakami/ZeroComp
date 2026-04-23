@@ -27,6 +27,29 @@ namespace {
         { /* retry */ }
     }
 
+    inline float sanitizeFinite(float v, float fallback = 0.0f) noexcept
+    {
+        return std::isfinite(v) ? v : fallback;
+    }
+
+    inline float clampFinite(float v, float lo, float hi, float fallback) noexcept
+    {
+        return juce::jlimit(lo, hi, sanitizeFinite(v, fallback));
+    }
+
+    inline void sanitizeBufferFinite(juce::AudioBuffer<float>& buffer, int numChannels, int numSamples) noexcept
+    {
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            auto* data = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                if (! std::isfinite(data[i]))
+                    data[i] = 0.0f;
+            }
+        }
+    }
+
     // 対数スキュー（等比マッピング）付き NormalisableRange を組み立てる。
     juce::NormalisableRange<float> makeLogRange(float start, float end, float interval = 0.0f)
     {
@@ -168,11 +191,7 @@ void ZeroCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     inputMomentary.prepareToPlay(sampleRate, samplesPerBlock);
     outputMomentary.prepareToPlay(sampleRate, samplesPerBlock);
 
-    inputCopyBuffer.setSize(getTotalNumInputChannels(),
-                            samplesPerBlock,
-                            /*keepExistingContent*/ false,
-                            /*clearExtraSpace*/     true,
-                            /*avoidReallocating*/   false);
+    juce::ignoreUnused(samplesPerBlock);
 }
 
 void ZeroCompAudioProcessor::releaseResources()
@@ -180,7 +199,6 @@ void ZeroCompAudioProcessor::releaseResources()
     compressor.reset();
     inputMomentary.reset();
     outputMomentary.reset();
-    inputCopyBuffer.setSize(0, 0);
 }
 
 bool ZeroCompAudioProcessor::isBusesLayoutSupported(const juce::AudioProcessor::BusesLayout& layouts) const
@@ -201,13 +219,15 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     const int numSamples  = buffer.getNumSamples();
     if (numSamples <= 0 || numChannels <= 0) return;
 
+    sanitizeBufferFinite(buffer, numChannels, numSamples);
+
     // --- パラメータ取得 ---
-    const float thresholdDb = parameters.getRawParameterValue(zc::id::THRESHOLD.getParamID())->load();
-    const float ratio       = parameters.getRawParameterValue(zc::id::RATIO.getParamID())->load();
-    const float kneeDb      = parameters.getRawParameterValue(zc::id::KNEE_DB.getParamID())->load();
-    const float attackMs    = parameters.getRawParameterValue(zc::id::ATTACK_MS.getParamID())->load();
-    const float releaseMs   = parameters.getRawParameterValue(zc::id::RELEASE_MS.getParamID())->load();
-    const float outGainDb   = parameters.getRawParameterValue(zc::id::OUTPUT_GAIN.getParamID())->load();
+    const float thresholdDb = clampFinite(parameters.getRawParameterValue(zc::id::THRESHOLD.getParamID())->load(),   -80.0f, 0.0f,    0.0f);
+    const float ratio       = clampFinite(parameters.getRawParameterValue(zc::id::RATIO.getParamID())->load(),         1.0f, 100.0f,  1.0f);
+    const float kneeDb      = clampFinite(parameters.getRawParameterValue(zc::id::KNEE_DB.getParamID())->load(),       0.0f, 24.0f,   6.0f);
+    const float attackMs    = clampFinite(parameters.getRawParameterValue(zc::id::ATTACK_MS.getParamID())->load(),     0.1f, 500.0f, 10.0f);
+    const float releaseMs   = clampFinite(parameters.getRawParameterValue(zc::id::RELEASE_MS.getParamID())->load(),    0.1f, 2000.0f, 100.0f);
+    const float outGainDb   = clampFinite(parameters.getRawParameterValue(zc::id::OUTPUT_GAIN.getParamID())->load(), -24.0f, 24.0f,   0.0f);
     const bool  autoMakeup  = parameters.getRawParameterValue(zc::id::AUTO_MAKEUP.getParamID())->load() > 0.5f;
     const int   modeIdx     = static_cast<int>(parameters.getRawParameterValue(zc::id::MODE.getParamID())->load() + 0.5f);
 
@@ -219,19 +239,10 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     compressor.setMode(static_cast<zc::dsp::Compressor::Mode>(
         juce::jlimit(0, 3, modeIdx)));
 
-    // --- 入力コピー（破壊前に退避）---
-    if (inputCopyBuffer.getNumChannels() != numChannels
-        || inputCopyBuffer.getNumSamples() < numSamples)
-    {
-        inputCopyBuffer.setSize(numChannels, numSamples, false, false, /*avoidReallocating*/ true);
-    }
-    for (int ch = 0; ch < numChannels; ++ch)
-        inputCopyBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
-
     // --- 入力メータ（Peak + RMS）---
     {
-        auto* l = inputCopyBuffer.getReadPointer(0);
-        auto* r = inputCopyBuffer.getReadPointer(std::min(1, numChannels - 1));
+        auto* l = buffer.getReadPointer(0);
+        auto* r = buffer.getReadPointer(std::min(1, numChannels - 1));
         float peakL = 0.0f, peakR = 0.0f, sqL = 0.0f, sqR = 0.0f;
         for (int i = 0; i < numSamples; ++i)
         {
@@ -248,7 +259,7 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         atomicMaxFloat(inRmsAccumL, std::sqrt(sqL * invN));
         atomicMaxFloat(inRmsAccumR, std::sqrt(sqR * invN));
     }
-    inputMomentary.processBlock(inputCopyBuffer);
+    inputMomentary.processBlock(buffer);
 
     // --- コンプ本体 ---
     const float minGain = compressor.processBlock(buffer);

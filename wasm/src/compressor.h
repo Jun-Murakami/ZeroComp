@@ -34,15 +34,15 @@ public:
         ldrHeat        = 0.0f;
     }
 
-    void setThresholdDb(float v) noexcept { thresholdDb = clamp(v, -80.0f, 0.0f); }
+    void setThresholdDb(float v) noexcept { thresholdDb = clampFinite(v, -80.0f, 0.0f, 0.0f); }
     void setRatio(float r) noexcept
     {
-        ratio = clamp(r, 1.0f, 100.0f);
+        ratio = clampFinite(r, 1.0f, 100.0f, 1.0f);
         slope = 1.0f - 1.0f / ratio;
     }
-    void setKneeDb(float k) noexcept { kneeDb = clamp(k, 0.0f, 24.0f); }
-    void setAttackMs(float ms) noexcept  { attackMs  = clamp(ms, 0.1f, 500.0f);  updateCoeffs(); }
-    void setReleaseMs(float ms) noexcept { releaseMs = clamp(ms, 0.1f, 2000.0f); updateCoeffs(); }
+    void setKneeDb(float k) noexcept { kneeDb = clampFinite(k, 0.0f, 24.0f, 6.0f); }
+    void setAttackMs(float ms) noexcept  { attackMs  = clampFinite(ms, 0.1f, 500.0f, 10.0f);  updateCoeffs(); }
+    void setReleaseMs(float ms) noexcept { releaseMs = clampFinite(ms, 0.1f, 2000.0f, 100.0f); updateCoeffs(); }
     void setMode(int m) noexcept
     {
         if (m < 0) m = 0;
@@ -54,6 +54,10 @@ public:
     float processStereoInPlace(float* L, float* R, int n) noexcept
     {
         float minGain = 1.0f;
+        if (! std::isfinite(envelopeDb)) envelopeDb = 0.0f;
+        if (! std::isfinite(envelopeDbSlow)) envelopeDbSlow = 0.0f;
+        if (! std::isfinite(ldrHeat)) ldrHeat = 0.0f;
+
         const float aC = attackCoeff;
         const float rC = releaseCoeff;
         const float rCS = releaseCoeffSlow;
@@ -70,7 +74,9 @@ public:
 
         for (int i = 0; i < n; ++i)
         {
-            const float a = std::max(std::fabs(L[i]), std::fabs(R[i]));
+            const float inL = sanitizeFinite(L[i]);
+            const float inR = sanitizeFinite(R[i]);
+            const float a = std::max(std::fabs(inL), std::fabs(inR));
             const float x = a > kMinAbs ? a : kMinAbs;
             const float xDb = 20.0f * std::log10(x);
             const float targetDb = computeGainReductionDb(xDb, kneeForCurve);
@@ -92,8 +98,8 @@ public:
             }
 
             const float g = std::pow(10.0f, -grApplied / 20.0f);
-            float sL = L[i] * g;
-            float sR = R[i] * g;
+            float sL = inL * g;
+            float sR = inR * g;
 
             if (fetDrive > 0.0f)       { sL = fetSaturate(sL, fetDrive);    sR = fetSaturate(sR, fetDrive);    }
             else if (variMuDrive > 0.0f){ sL = variMuSaturate(sL, variMuDrive); sR = variMuSaturate(sR, variMuDrive); }
@@ -113,13 +119,22 @@ public:
     }
 
 private:
-    static float clamp(float v, float lo, float hi) noexcept
+    static float sanitizeFinite(float v, float fallback = 0.0f) noexcept
     {
+        return std::isfinite(v) ? v : fallback;
+    }
+
+    static float clampFinite(float v, float lo, float hi, float fallback) noexcept
+    {
+        v = sanitizeFinite(v, fallback);
         return v < lo ? lo : (v > hi ? hi : v);
     }
 
     float computeGainReductionDb(float inputDb, float kneeForCurve) const noexcept
     {
+        inputDb = sanitizeFinite(inputDb, -120.0f);
+        kneeForCurve = clampFinite(kneeForCurve, 0.0f, 36.0f, 0.0f);
+
         if (kneeForCurve <= 0.0f)
         {
             if (inputDb <= thresholdDb) return 0.0f;

@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "ParameterIDs.h"
 #include "Version.h"
+#include "KeyEventForwarder.h"
 
 #include <unordered_map>
 #include <cmath>
@@ -294,8 +295,8 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
     resizer->setAlwaysOnTop(true);
 
     // ホスト側の最小画面表示量
-    if (auto* constrainer = getConstrainer())
-        constrainer->setMinimumOnscreenAmounts(50, 50, 50, 50);
+    if (auto* hostConstrainer = getConstrainer())
+        hostConstrainer->setMinimumOnscreenAmounts(50, 50, 50, 50);
 
     if (useLocalDevServer)
         webView.goToURL(LOCAL_DEV_SERVER_ADDRESS);
@@ -375,6 +376,12 @@ void ZeroCompAudioProcessorEditor::handleSystemAction(const juce::Array<juce::va
             init->setProperty("pluginName", "ZeroComp");
             init->setProperty("version", ZEROCOMP_VERSION_STRING);
             completion(juce::var{ init.get() });
+            return;
+        }
+        if (action == "forward_key_event" && args.size() >= 2)
+        {
+            const bool forwarded = zc::KeyEventForwarder::forwardKeyEventToHost(args[1], this);
+            completion(juce::var{ forwarded });
             return;
         }
     }

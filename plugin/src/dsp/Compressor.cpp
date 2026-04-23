@@ -5,6 +5,18 @@
 
 namespace zc::dsp {
 
+namespace {
+    inline float sanitizeFinite(float v, float fallback = 0.0f) noexcept
+    {
+        return std::isfinite(v) ? v : fallback;
+    }
+
+    inline float clampFinite(float v, float lo, float hi, float fallback) noexcept
+    {
+        return std::clamp(sanitizeFinite(v, fallback), lo, hi);
+    }
+}
+
 void Compressor::prepare(double sampleRate, int /*numChannels*/)
 {
     currentSampleRate = sampleRate > 0.0 ? sampleRate : 44100.0;
@@ -21,30 +33,30 @@ void Compressor::reset()
 
 void Compressor::setThresholdDb(float v) noexcept
 {
-    thresholdDb = std::clamp(v, -80.0f, 0.0f);
+    thresholdDb = clampFinite(v, -80.0f, 0.0f, 0.0f);
 }
 
 void Compressor::setRatio(float r) noexcept
 {
-    ratio = std::clamp(r, 1.0f, 100.0f);
+    ratio = clampFinite(r, 1.0f, 100.0f, 1.0f);
     // 1/ratio: r=1 → 1.0（抑制なし）, r→∞ → 0（ブリックウォール）
     slope = 1.0f - 1.0f / ratio;
 }
 
 void Compressor::setKneeDb(float k) noexcept
 {
-    kneeDb = std::clamp(k, 0.0f, 24.0f);
+    kneeDb = clampFinite(k, 0.0f, 24.0f, 6.0f);
 }
 
 void Compressor::setAttackMs(float ms) noexcept
 {
-    attackMs = std::clamp(ms, 0.1f, 500.0f);
+    attackMs = clampFinite(ms, 0.1f, 500.0f, 10.0f);
     updateCoeffs();
 }
 
 void Compressor::setReleaseMs(float ms) noexcept
 {
-    releaseMs = std::clamp(ms, 0.1f, 2000.0f);
+    releaseMs = clampFinite(ms, 0.1f, 2000.0f, 100.0f);
     updateCoeffs();
 }
 
@@ -72,6 +84,9 @@ void Compressor::updateCoeffs() noexcept
 
 float Compressor::computeGainReductionDb(float inputDb, float kneeForCurve) const noexcept
 {
+    inputDb = sanitizeFinite(inputDb, -120.0f);
+    kneeForCurve = clampFinite(kneeForCurve, 0.0f, 36.0f, 0.0f);
+
     // Giannoulis/Massberg/Reiss 2012 の静的カーブ（ソフトニー付き）。
     //  y = x                                      (x < T - K/2)
     //  y = x + slope * (x - T + K/2)^2 / (2K)     (|x - T| <= K/2)
@@ -124,6 +139,9 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
     if (numChannels <= 0 || numSamples <= 0) return 1.0f;
 
     float minGain = 1.0f;
+    if (! std::isfinite(envelopeDb)) envelopeDb = 0.0f;
+    if (! std::isfinite(envelopeDbSlow)) envelopeDbSlow = 0.0f;
+    if (! std::isfinite(ldrHeat)) ldrHeat = 0.0f;
 
     const float aC  = attackCoeff;
     const float rC  = releaseCoeff;
@@ -145,6 +163,9 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
 
     auto step = [&](float& sampleL, float& sampleR) noexcept
     {
+        sampleL = sanitizeFinite(sampleL);
+        sampleR = sanitizeFinite(sampleR);
+
         // ピーク検出（ステレオリンク）
         const float a = std::max(std::abs(sampleL), std::abs(sampleR));
         const float x = a > kMinAbs ? a : kMinAbs;
@@ -227,7 +248,10 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer) noexcept
         {
             const float g = std::pow(10.0f, -envelopeDb / 20.0f);
             for (int ch = 2; ch < numChannels; ++ch)
-                buffer.getWritePointer(ch)[i] *= g;
+            {
+                auto* extra = buffer.getWritePointer(ch);
+                extra[i] = sanitizeFinite(extra[i]) * g;
+            }
         }
     }
     return minGain;

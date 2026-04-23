@@ -20,7 +20,7 @@ class DspEngine
 public:
     void prepare(double sr, int maxBlock) noexcept
     {
-        sampleRate = sr > 0.0 ? sr : 48000.0;
+        sampleRate = std::isfinite(sr) && sr > 0.0 ? sr : 48000.0;
         maxBlockSize = std::max(1, maxBlock);
 
         compressor.prepare(sampleRate);
@@ -37,8 +37,10 @@ public:
         if (numSamples <= 0) { clearSource(); return; }
         sourceL.assign(L, L + numSamples);
         sourceR.assign(R ? R : L, (R ? R : L) + numSamples);
+        for (auto& s : sourceL) s = sanitizeFinite(s);
+        for (auto& s : sourceR) s = sanitizeFinite(s);
         sourceNumSamples = numSamples;
-        sourceRate       = sourceSampleRate > 0.0 ? sourceSampleRate : sampleRate;
+        sourceRate       = std::isfinite(sourceSampleRate) && sourceSampleRate > 0.0 ? sourceSampleRate : sampleRate;
 
         rateRatio = sourceRate / sampleRate;
         playPos   = 0.0;
@@ -99,12 +101,12 @@ public:
 
     // ====== パラメータ ======
 
-    void setThresholdDb(float db) noexcept { thresholdDb = db; compressor.setThresholdDb(db); }
-    void setRatio(float r) noexcept        { ratio = r;       compressor.setRatio(r); }
+    void setThresholdDb(float db) noexcept { thresholdDb = clampFinite(db, -80.0f, 0.0f, 0.0f); compressor.setThresholdDb(thresholdDb); }
+    void setRatio(float r) noexcept        { ratio = clampFinite(r, 1.0f, 100.0f, 1.0f);        compressor.setRatio(ratio); }
     void setKneeDb(float k) noexcept       { compressor.setKneeDb(k); }
     void setAttackMs(float ms) noexcept    { compressor.setAttackMs(ms); }
     void setReleaseMs(float ms) noexcept   { compressor.setReleaseMs(ms); }
-    void setOutputGainDb(float db) noexcept{ outputGainDb = db; }
+    void setOutputGainDb(float db) noexcept{ outputGainDb = clampFinite(db, -24.0f, 24.0f, 0.0f); }
     void setAutoMakeup(bool on) noexcept   { autoMakeupOn = on; }
     void setMode(int m) noexcept           { compressor.setMode(m); }
 
@@ -130,6 +132,7 @@ public:
 
         // --- 1) ソース fetch ---
         fetchSource(outL, outR, numSamples);
+        sanitizeStereo(outL, outR, numSamples);
 
         // --- 2) 入力メーター ---
         accumInMeters(outL, outR, numSamples);
@@ -148,7 +151,7 @@ public:
         // --- 4) Auto Makeup + Output Gain（プラグイン側と同じ式）---
         const float autoMakeupDb = compressor.computeAutoMakeupDb();
         const float effectiveDb = (autoMakeupOn ? autoMakeupDb : 0.0f) + outputGainDb;
-        const float total = std::pow(10.0f, effectiveDb / 20.0f);
+        const float total = sanitizeFinite(std::pow(10.0f, effectiveDb / 20.0f), 1.0f);
         if (std::fabs(total - 1.0f) > 1.0e-6f)
         {
             for (int i = 0; i < numSamples; ++i)
@@ -213,9 +216,29 @@ public:
 private:
     static float amplitudeToDb(float amp, float floorDb) noexcept
     {
-        if (amp <= 0.0f) return floorDb;
+        if (! std::isfinite(amp) || amp <= 0.0f) return floorDb;
         const float db = 20.0f * std::log10(amp);
         return std::max(db, floorDb);
+    }
+
+    static float sanitizeFinite(float v, float fallback = 0.0f) noexcept
+    {
+        return std::isfinite(v) ? v : fallback;
+    }
+
+    static float clampFinite(float v, float lo, float hi, float fallback) noexcept
+    {
+        v = sanitizeFinite(v, fallback);
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    static void sanitizeStereo(float* L, float* R, int n) noexcept
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            L[i] = sanitizeFinite(L[i]);
+            R[i] = sanitizeFinite(R[i]);
+        }
     }
 
     void fetchSource(float* outL, float* outR, int n) noexcept
@@ -269,12 +292,14 @@ private:
         double sumL = 0.0, sumR = 0.0;
         for (int i = 0; i < n; ++i)
         {
-            const float aL = std::fabs(L[i]);
-            const float aR = std::fabs(R[i]);
+            const float l = sanitizeFinite(L[i]);
+            const float r = sanitizeFinite(R[i]);
+            const float aL = std::fabs(l);
+            const float aR = std::fabs(r);
             if (aL > pL) pL = aL;
             if (aR > pR) pR = aR;
-            sumL += static_cast<double>(L[i]) * L[i];
-            sumR += static_cast<double>(R[i]) * R[i];
+            sumL += static_cast<double>(l) * l;
+            sumR += static_cast<double>(r) * r;
         }
         inPeakAccumL = pL;
         inPeakAccumR = pR;
@@ -290,12 +315,14 @@ private:
         double sumL = 0.0, sumR = 0.0;
         for (int i = 0; i < n; ++i)
         {
-            const float aL = std::fabs(L[i]);
-            const float aR = std::fabs(R[i]);
+            const float l = sanitizeFinite(L[i]);
+            const float r = sanitizeFinite(R[i]);
+            const float aL = std::fabs(l);
+            const float aR = std::fabs(r);
             if (aL > pL) pL = aL;
             if (aR > pR) pR = aR;
-            sumL += static_cast<double>(L[i]) * L[i];
-            sumR += static_cast<double>(R[i]) * R[i];
+            sumL += static_cast<double>(l) * l;
+            sumR += static_cast<double>(r) * r;
         }
         outPeakAccumL = pL;
         outPeakAccumR = pR;

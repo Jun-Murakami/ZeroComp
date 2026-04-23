@@ -3,6 +3,9 @@
  * すべてのオーディオ処理（再生・コンプ・メーター）は C++ WASM の dsp_process_block() に委譲。
  */
 
+const INITIAL_RENDER_FRAMES = 2048;
+const METER_FLOATS = 13;
+
 class DspProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
@@ -13,6 +16,8 @@ class DspProcessor extends AudioWorkletProcessor {
     this.outLPtr = 0;
     this.outRPtr = 0;
     this.meterBufPtr = 0; // 13 floats
+    this.renderBufferFrames = 0;
+    this.heapF32 = null;
 
     this.updateCounter = 0;
 
@@ -28,12 +33,19 @@ class DspProcessor extends AudioWorkletProcessor {
       case 'load-source': {
         if (!this.wasm) break;
         const { left, right, numSamples, sourceSampleRate } = msg;
+        if (!Number.isFinite(numSamples) || numSamples <= 0) break;
         const L = new Float32Array(left);
         const R = new Float32Array(right);
 
         const lPtr = this.wasm.dsp_alloc_buffer(numSamples);
         const rPtr = this.wasm.dsp_alloc_buffer(numSamples);
-        const heap = new Float32Array(this.wasmMemory.buffer);
+        this.refreshHeapView();
+        const heap = this.heapF32;
+        if (!lPtr || !rPtr || !heap) {
+          if (lPtr) this.wasm.dsp_free_buffer(lPtr);
+          if (rPtr) this.wasm.dsp_free_buffer(rPtr);
+          break;
+        }
         heap.set(L, lPtr / 4);
         heap.set(R, rPtr / 4);
 
@@ -41,6 +53,7 @@ class DspProcessor extends AudioWorkletProcessor {
 
         this.wasm.dsp_free_buffer(lPtr);
         this.wasm.dsp_free_buffer(rPtr);
+        this.refreshHeapView();
         break;
       }
 
@@ -93,17 +106,48 @@ class DspProcessor extends AudioWorkletProcessor {
       this.wasmMemory = instance.exports.memory;
 
       // sampleRate はワークレットのグローバル定数
-      this.wasm.dsp_init(sampleRate, 128);
+      this.wasm.dsp_init(sampleRate, INITIAL_RENDER_FRAMES);
 
-      this.outLPtr = this.wasm.dsp_alloc_buffer(128);
-      this.outRPtr = this.wasm.dsp_alloc_buffer(128);
-      this.meterBufPtr = this.wasm.dsp_alloc_buffer(13);
+      this.meterBufPtr = this.wasm.dsp_alloc_buffer(METER_FLOATS);
+      if (!this.ensureRenderBufferCapacity(INITIAL_RENDER_FRAMES) || !this.meterBufPtr) {
+        throw new Error('WASM audio buffer allocation failed');
+      }
+      this.refreshHeapView();
 
       this.wasmReady = true;
       this.port.postMessage({ type: 'wasm-ready' });
     } catch (err) {
       this.port.postMessage({ type: 'wasm-error', error: String(err) });
     }
+  }
+
+  refreshHeapView() {
+    if (!this.wasmMemory) return false;
+    if (!this.heapF32 || this.heapF32.buffer !== this.wasmMemory.buffer) {
+      this.heapF32 = new Float32Array(this.wasmMemory.buffer);
+    }
+    return true;
+  }
+
+  ensureRenderBufferCapacity(frameCount) {
+    if (!this.wasm || frameCount <= 0) return false;
+    if (frameCount <= this.renderBufferFrames && this.refreshHeapView()) return true;
+
+    const nextFrames = Math.max(frameCount, INITIAL_RENDER_FRAMES);
+    const nextL = this.wasm.dsp_alloc_buffer(nextFrames);
+    const nextR = this.wasm.dsp_alloc_buffer(nextFrames);
+    if (!nextL || !nextR) {
+      if (nextL) this.wasm.dsp_free_buffer(nextL);
+      if (nextR) this.wasm.dsp_free_buffer(nextR);
+      return false;
+    }
+
+    if (this.outLPtr) this.wasm.dsp_free_buffer(this.outLPtr);
+    if (this.outRPtr) this.wasm.dsp_free_buffer(this.outRPtr);
+    this.outLPtr = nextL;
+    this.outRPtr = nextR;
+    this.renderBufferFrames = nextFrames;
+    return this.refreshHeapView();
   }
 
   process(inputs, outputs) {
@@ -114,12 +158,22 @@ class DspProcessor extends AudioWorkletProcessor {
     const outL = output[0];
     const outR = output[1];
     const n = outL.length;
+    if (!this.ensureRenderBufferCapacity(n)) {
+      outL.fill(0);
+      outR.fill(0);
+      return true;
+    }
 
     this.wasm.dsp_process_block(this.outLPtr, this.outRPtr, n);
 
-    const heap = new Float32Array(this.wasmMemory.buffer);
-    outL.set(heap.subarray(this.outLPtr / 4, this.outLPtr / 4 + n));
-    outR.set(heap.subarray(this.outRPtr / 4, this.outRPtr / 4 + n));
+    this.refreshHeapView();
+    const heap = this.heapF32;
+    const lBase = this.outLPtr / 4;
+    const rBase = this.outRPtr / 4;
+    for (let i = 0; i < n; ++i) {
+      outL[i] = heap[lBase + i];
+      outR[i] = heap[rBase + i];
+    }
 
     // ~20Hz でメインスレッドへ状態通知
     const interval = Math.max(1, Math.round(sampleRate / (n * 20)));
@@ -128,7 +182,8 @@ class DspProcessor extends AudioWorkletProcessor {
 
       const stoppedAtEnd = this.wasm.dsp_consume_stopped_at_end();
       this.wasm.dsp_get_meter_data(this.meterBufPtr);
-      const mh = new Float32Array(this.wasmMemory.buffer);
+      this.refreshHeapView();
+      const mh = this.heapF32;
       const mo = this.meterBufPtr / 4;
 
       this.port.postMessage({

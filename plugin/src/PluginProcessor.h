@@ -60,8 +60,5 @@ private:
 
     zc::dsp::Compressor compressor;
 
-    // 入力信号を破壊前に保持するための作業バッファ（入力メータ・Momentary 用）
-    juce::AudioBuffer<float> inputCopyBuffer;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZeroCompAudioProcessor)
 };
