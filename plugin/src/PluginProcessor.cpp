@@ -255,13 +255,13 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     atomicMinFloat(minGainAccum, minGain);
 
     // --- 出力ゲイン / Auto Makeup ---
-    //  Auto Makeup ON 時は threshold/ratio から自動算出した makeup を適用（OUTPUT_GAIN は無視）。
-    //  formula: makeup_dB = -threshold * (1 - 1/ratio)
-    //    - 0 dBFS 信号が圧縮で失ったぶんをちょうど補償する値。threshold=0 や ratio=1 で makeup=0。
-    //    - RatioGraph 側の表示もこの式を共有してカーブを上へシフト描画する（UI と DSP を一致させる）。
-    const float effectiveGainDb = autoMakeup
-        ? (-thresholdDb * (1.0f - 1.0f / std::max(1.0f, ratio)))
-        : outGainDb;
+    //  Auto Makeup ON 時は threshold/ratio から自動算出した makeup を基本値として適用。
+    //  formula: makeup_dB = -threshold * (1 - 1/ratio) * 0.5   （ハーフ補償）
+    //    - フル補償だと 0 dBFS ピークがそのままピークに戻り出力が張り付くため、半分に抑える。
+    //  さらに OUTPUT_GAIN をトリムとして加算する（Auto Makeup の上に ± 微調整ができる）。
+    //  OFF 時は従来通り OUTPUT_GAIN のみ。
+    const float autoMakeupDb = -thresholdDb * (1.0f - 1.0f / std::max(1.0f, ratio)) * 0.5f;
+    const float effectiveGainDb = (autoMakeup ? autoMakeupDb : 0.0f) + outGainDb;
     const float outGainLin = std::pow(10.0f, effectiveGainDb / 20.0f);
     if (std::abs(outGainLin - 1.0f) > 1.0e-6f)
     {

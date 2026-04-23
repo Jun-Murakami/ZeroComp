@@ -90,13 +90,17 @@ function App() {
   const { value: thresholdDbVal } = useJuceSliderValue('THRESHOLD');
   const { value: ratioVal } = useJuceSliderValue('RATIO');
   const { value: kneeDbVal } = useJuceSliderValue('KNEE_DB');
+  const { value: outputGainDbVal } = useJuceSliderValue('OUTPUT_GAIN');
   const { value: autoMakeupOn, setValue: setAutoMakeup } = useJuceToggleValue('AUTO_MAKEUP', false);
 
-  // Auto Makeup 有効時のシフト量。DSP 側と同じ式で算出し、グラフ表示と音の挙動を一致させる。
-  //   makeup_dB = -threshold * (1 - 1/ratio)
-  const makeupDbDisplay = autoMakeupOn
-    ? Math.max(0, -thresholdDbVal * (1 - 1 / Math.max(1, ratioVal)))
+  // Auto Makeup 時の自動補償量（ハーフ補償、DSP 側と同じ式）。
+  //   makeup_dB = -threshold * (1 - 1/ratio) * 0.5
+  const autoMakeupDb = autoMakeupOn
+    ? Math.max(0, -thresholdDbVal * (1 - 1 / Math.max(1, ratioVal)) * 0.5)
     : 0;
+  // グラフのシフト量は「post-comp の全体ゲイン」= Auto Makeup + Output Gain トリム。
+  //  これで Output フェーダーを動かすとカーブがライブで追従し、Auto Makeup と合算された実効曲線が見える。
+  const makeupDbDisplay = autoMakeupDb + outputGainDbVal;
 
   const [graphInDb, setGraphInDb] = useState(MIN_DB);
 
@@ -470,7 +474,7 @@ function App() {
                         '&:hover': { backgroundColor: autoMakeupOn ? 'primary.dark' : 'grey.700' },
                       }}
                     >
-                      {autoMakeupOn ? `Auto Makeup  +${makeupDbDisplay.toFixed(1)} dB` : 'Auto Makeup'}
+                      {autoMakeupOn ? `Auto Makeup  +${autoMakeupDb.toFixed(1)} dB` : 'Auto Makeup'}
                     </Button>
                   </Tooltip>
                 </Box>
@@ -681,7 +685,7 @@ function App() {
                 </Box>
               </Box>
 
-              {/* 右: Output Gain — Auto Makeup ON のときは無効表示 */}
+              {/* 右: Output Gain — Auto Makeup ON の場合はその上に ± トリムとして加算される */}
               <Box>
                 <ParameterFader
                   parameterId='OUTPUT_GAIN'
@@ -692,7 +696,6 @@ function App() {
                   defaultValue={0}
                   wheelStep={1}
                   wheelStepFine={0.1}
-                  disabled={autoMakeupOn}
                   scaleMarks={[
                     { value: 24, label: '+24' },
                     { value: 12, label: '+12' },
