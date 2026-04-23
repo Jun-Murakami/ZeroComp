@@ -44,7 +44,7 @@ function App() {
   //    - 上段: 3 フェーダー (Threshold / Ratio / Output) を 1 行に並べ、グラフ+メーターを 2 行目に回す
   //    - 下段の 2 カラム grid を 1 カラムに畳む
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('xs')) && IS_WEB_MODE;
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm')) && IS_WEB_MODE;
 
   const [inL, setInL] = useState(MIN_DB);
   const [inR, setInR] = useState(MIN_DB);

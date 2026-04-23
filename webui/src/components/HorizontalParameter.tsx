@@ -93,7 +93,7 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
     }
   };
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('xs'));
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   return (
     <Box
