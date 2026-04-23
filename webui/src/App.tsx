@@ -337,7 +337,7 @@ function App() {
                 width: '100%',
                 maxWidth: 720,
                 // モバイルでは内容に合わせて伸ばす（縦スクロール許容）。
-                height: isMobile ? 'auto' : 470,
+                height: isMobile ? 'auto' : 480,
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
