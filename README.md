@@ -1,25 +1,38 @@
 # ZeroComp
 
-A **zero-latency** feedforward compressor for broadcast, streaming, and live production. Built with JUCE + WebView (Vite / React 19 / MUI 7). Ships as VST3 / AU / AAX / Standalone.
+A **zero-latency** feedforward compressor for broadcast, streaming, and live production, with four analog-flavored modes (VCA / Opto / FET / Vari-Mu). Built with JUCE + WebView (Vite / React 19 / MUI 7). Ships as VST3 / AU / AAX / Standalone, plus a WebAssembly browser demo that reuses the exact same DSP.
 
 ## Highlights
 
-- **0-sample latency** — no lookahead. Instant attack with smoothed release envelope. Suitable for live/broadcast where monitoring delay is unacceptable.
+- **0-sample latency** — no lookahead, no oversampling. Instant attack with smoothed release envelope. Suitable for live/broadcast where monitoring delay is unacceptable.
+- **Four analog modes** — VCA (clean) / Opto (slow, trailing release with LDR thermal memory) / FET (asymmetric grit) / Vari-Mu (soft knee + even-order warmth). All stay zero-latency; only envelope behaviour and post-gain saturation differ.
 - **Wide dynamic range** — Threshold from 0 down to -80 dBFS, Ratio from 1:1 to 100:1 (effectively brickwall at the high end).
 - **Soft knee** — 0..24 dB continuously variable knee. The displayed transfer curve stays in sync with the DSP at all times.
-- **Real-time transfer curve graph** — the center panel shows the static IN→OUT curve with the current input peak (red) and output peak (yellow) overlaid.
+- **Auto Makeup** — one-click half-compensation `-threshold × (1 - 1/ratio) × 0.5`. Keeps perceived loudness up without crushing peaks to the ceiling. Output Gain still works on top as a ± trim.
+- **Real-time transfer curve graph** — the center panel shows the static IN→OUT curve; the current input level appears as a blue dot riding along the curve. Auto Makeup shifts the curve up live.
 - **Three-mode metering** — Input L/R, Gain Reduction, Output L/R with Peak / RMS / Momentary LKFS (ITU-R BS.1770-4) switchable from a single button.
 - **Stereo-linked gain** — L/R share the same gain envelope (computed from `max(|L|,|R|)`) so the stereo image stays intact.
-- **Formats**: VST3, AU (macOS), AAX (when the SDK is present), Standalone.
+- **Mobile-friendly WebAssembly demo** — the same compressor DSP runs in the browser via an `AudioWorklet`; the UI collapses into a phone-friendly single-column layout on narrow viewports.
 
 ## Layout
 
-- Left — Threshold fader (0..-80 dB) and Ratio fader (1:1..100:1, log skew).
-- Center — Transfer curve graph, Input meter, Gain Reduction meter, Output meter.
-- Right — Output Gain fader (-24..+24 dB).
-- Bottom — Horizontal sliders for Knee, Attack, Release.
+- Left — Threshold fader (0..-80 dB) and Ratio fader (1:1..100:1, log skew, 1:1 at top).
+- Center-left — Real-time transfer curve graph (threshold marker, current operating dot, Auto Makeup shift).
+- Center-right — Input / GR / Output meters with a single Peak/RMS/Momentary toggle below them.
+- Right — Output Gain fader (-24..+24 dB). Stays active even when Auto Makeup is on, acting as a trim.
+- Bottom left — Knee slider and Mode selector (VCA / Opto / FET / Vari-Mu).
+- Bottom right — Attack and Release sliders.
 
-The plugin window is resizable (minimum 540 × 440, default 620 × 480).
+The plugin window is resizable (minimum 520 × 390, default 720 × 500).
+
+## Modes
+
+| Mode | Character | Implementation |
+| --- | --- | --- |
+| **VCA** | Clean, transparent | Single envelope, no colouration. The default. |
+| **Opto** | Slow, trailing release | Dual envelope (`fast` + `slow = release × 5`) with `max(GR)` fed out. **LDR thermal memory**: an internal `ldrHeat` state tracks recent GR and pushes the slow envelope toward a longer `release × 15` tail after sustained compression, then cools over ~3 s. |
+| **FET** | Asymmetric grit | Subtle post-gain asymmetric `tanh` clipper. |
+| **Vari-Mu** | Soft knee + even-order warmth | Knee widens by +12 dB internally; post-gain `sign(x) · x²` wave-shaper adds gentle tube-like harmonics. |
 
 ## Requirements
 
@@ -31,6 +44,7 @@ The plugin window is resizable (minimum 540 × 440, default 620 × 480).
 - JUCE (included as a submodule)
 - Optional: AAX SDK for Pro Tools builds (drop at `aax-sdk/`)
 - Optional: Inno Setup 6 for the Windows installer
+- Optional: [Emscripten](https://emscripten.org) for the WebAssembly demo
 
 ## Getting started
 
@@ -76,21 +90,47 @@ cmake --build build --config Debug --target ZeroComp_Standalone
 
 Debug builds load the WebUI from `http://127.0.0.1:5173`. Release builds embed the bundled assets via `juce_add_binary_data`.
 
+### Web demo (WebAssembly)
+
+The same C++ compressor DSP is compiled to WebAssembly and driven by an `AudioWorklet` in the browser. The React UI is reused verbatim; a Vite alias swaps `juce-framework-frontend-mirror` for a local shim that owns parameter state and forwards changes to the AudioWorklet.
+
+```bash
+# Build the WASM module (requires emsdk activated in the shell)
+cd wasm
+bash build.sh        # emits webui/public-web/wasm/zerocomp_dsp.wasm
+
+# Start the web-demo dev server
+cd ../webui
+npm run dev:web      # http://127.0.0.1:5174
+
+# Production bundle
+npm run build:web    # dist/ ready for static hosting
+
+# Firebase Hosting deploy
+npm run deploy:web   # requires firebase CLI + zerocomp-demo project
+```
+
+At 640 px or narrower, the web UI rearranges itself: graph + meters on top, the three vertical faders on the second row, and the horizontal Knee / Mode / Attack / Release sliders stacked below.
+
 ## Parameters
 
-| ID              | Type                 | Range / Values         | Default  | Notes                                                       |
-| --------------- | -------------------- | ---------------------- | -------- | ----------------------------------------------------------- |
-| `THRESHOLD`     | float (dB)           | -80 .. 0               | 0 dB     | Gain reduction starts at the threshold (with soft knee).    |
-| `RATIO`         | float (log skew)     | 1 .. 100               | 4.0      | 1:1 = off, 100:1 ≈ brickwall.                               |
-| `KNEE_DB`       | float (dB)           | 0 .. 24                | 6.0      | Soft-knee width. 0 = hard knee.                             |
-| `ATTACK_MS`     | float (ms, log skew) | 0.1 .. 500             | 10.0     | Envelope attack time constant.                              |
-| `RELEASE_MS`    | float (ms, log skew) | 0.1 .. 2000            | 100.0    | Envelope release time constant.                             |
-| `OUTPUT_GAIN`   | float (dB)           | -24 .. +24             | 0 dB     | Post-compression trim.                                      |
-| `METERING_MODE` | choice               | Peak / RMS / Momentary | Peak     | Display mode for IN / OUT meters.                           |
+| ID              | Type                 | Range / Values                 | Default  | Notes                                                                                     |
+| --------------- | -------------------- | ------------------------------ | -------- | ----------------------------------------------------------------------------------------- |
+| `THRESHOLD`     | float (dB)           | -80 .. 0                       | 0 dB     | Gain reduction starts at the threshold (with soft knee).                                  |
+| `RATIO`         | float (log skew)     | 1 .. 100                       | 1.0      | 1:1 = off, 100:1 ≈ brickwall.                                                             |
+| `KNEE_DB`       | float (dB)           | 0 .. 24                        | 6.0      | Soft-knee width. 0 = hard knee.                                                           |
+| `ATTACK_MS`     | float (ms, log skew) | 0.1 .. 500                     | 10.0     | Envelope attack time constant.                                                            |
+| `RELEASE_MS`    | float (ms, log skew) | 0.1 .. 2000                    | 100.0    | Envelope release time constant.                                                           |
+| `OUTPUT_GAIN`   | float (dB)           | -24 .. +24                     | 0 dB     | Post-compression trim. Stays active when Auto Makeup is on (adds on top as ± trim).       |
+| `AUTO_MAKEUP`   | bool                 | off / on                       | off      | Half-compensation makeup: `-threshold × (1 - 1/ratio) × 0.5`. Displayed on the curve too. |
+| `MODE`          | choice               | VCA / Opto / FET / Vari-Mu     | VCA      | Envelope behaviour + post-gain saturation character.                                      |
+| `METERING_MODE` | choice               | Peak / RMS / Momentary         | Peak     | Display mode for IN / OUT meters.                                                         |
 
 ## DSP details
 
-The static curve follows Giannoulis / Massberg / Reiss (2012):
+### Static curve
+
+Giannoulis / Massberg / Reiss (2012):
 
 ```
        x                                  (x < T - K/2)
@@ -100,7 +140,21 @@ y =    x + (1 - 1/R) · (x - T + K/2)²/2K  (|x - T| ≤ K/2)
 
 where `x` is input dB, `y` is output dB, `T` is threshold, `R` is ratio, `K` is knee width. Gain reduction `GR = x - y` is always non-negative.
 
-The envelope applies `coeff = exp(-1/(tau · fs))` on the GR signal, with `tau = attack` while the target is rising (compressor engaging) and `tau = release` while falling. The applied linear gain is `10^(-envelope/20)` and is shared across channels for stereo-linked behaviour.
+### Envelope
+
+`coeff = exp(-1 / (tau × fs))` is applied on the GR signal, with `tau = attack` while the target is rising (compressor engaging) and `tau = release` while falling. The applied linear gain is `10^(-envelope/20)` and is shared across channels for stereo-linked behaviour.
+
+### Opto LDR memory
+
+For the Opto mode, a second parallel envelope runs with `tau_slow = release × 5`, and the operating gain reduction is taken as `max(fast, slow)` — so long-tail reductions linger. On top of that, a slow heat state `ldrHeat ∈ [0, 1]` tracks recent GR with a 1 s heat-up / 3 s cool-down time constant, and when it is hot the slow-envelope release coefficient is interpolated toward a "sticky" value equivalent to `release × 15`. The net effect mirrors the thermal behaviour of the T4B photocell in an LA-2A: sustained loud material leaves the compressor hanging on noticeably longer.
+
+### Auto Makeup
+
+```
+makeup_dB = -threshold × (1 - 1/ratio) × 0.5
+```
+
+Half of the full compensation that would bring a 0 dBFS peak exactly back to 0 dBFS. Keeps perceived loudness up while leaving a few dB of headroom. `OUTPUT_GAIN` is summed on top, so users can still trim ±24 dB around the makeup.
 
 ## Latency verification
 
@@ -109,6 +163,11 @@ ZeroComp reports **0 samples** to the host. To confirm empirically in your DAW:
 1. Open the plugin info / delay compensation display — e.g. in Cubase the MixConsole insert header shows `Latency: 0 samples`.
 2. Null test — duplicate a clip on two tracks; insert ZeroComp on one with Threshold 0 dB (nothing triggers); invert polarity on the other; sum. The result is silence.
 
+## Host compatibility notes
+
+- **Pro Tools (AAX) on Windows**: the editor injects `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--force-device-scale-factor=1` before constructing WebView2 so the UI renders at 1× inside Pro Tools' DPI-virtualised window. It also defers a `setSize()` enforcement on the next message-loop iteration to overcome hosts that open the plugin below the declared minimum size.
+- **All hosts**: a per-monitor DPI poll runs on a 30 Hz timer and forces a re-layout when the DPI scale factor changes (useful when dragging the plugin window between monitors).
+
 ## Directory layout
 
 ```
@@ -116,26 +175,49 @@ ZeroComp/
 ├─ plugin/              # JUCE plugin (C++)
 │  ├─ src/
 │  │  ├─ PluginProcessor.*        # APVTS, DSP chain entry
-│  │  ├─ PluginEditor.*           # WebView init, Web↔APVTS relays
+│  │  ├─ PluginEditor.*           # WebView init, Web↔APVTS relays, DPI polling
 │  │  ├─ ParameterIDs.h
 │  │  ├─ KeyEventForwarder.*      # WebView → host DAW key forwarding
 │  │  └─ dsp/
-│  │     ├─ Compressor.*          # Zero-latency feedforward compressor
+│  │     ├─ Compressor.*          # Zero-latency feedforward compressor (4 modes + LDR memory)
 │  │     └─ MomentaryProcessor.*  # ITU-R BS.1770-4 Momentary LKFS
 │  └─ CMakeLists.txt
-├─ webui/               # Vite + React 19 + MUI 7 frontend
+├─ wasm/                # C++ DSP ported to pure-standard-library for Emscripten
 │  ├─ src/
-│  │  ├─ App.tsx
-│  │  ├─ components/{ParameterFader,HorizontalParameter,RatioGraph,VUMeter,LicenseDialog,...}.tsx
-│  │  ├─ hooks/{useJuceParam,useHostShortcutForwarding,...}.ts
-│  │  └─ bridge/juce.ts
+│  │  ├─ wasm_exports.cpp         # C ABI consumed by the AudioWorklet
+│  │  ├─ dsp_engine.h             # Orchestrator (source, transport, meters)
+│  │  ├─ compressor.h             # Pure-C++ port of Compressor (identical behaviour)
+│  │  └─ momentary_processor.h    # Pure-C++ port of MomentaryProcessor
+│  ├─ CMakeLists.txt
+│  └─ build.sh                    # emcmake + emmake, copies to webui/public-web/wasm/
+├─ webui/               # Vite + React 19 + MUI 7 frontend (plugin + web demo)
+│  ├─ src/
+│  │  ├─ App.tsx                  # Layout, meter event routing, responsive breakpoints
+│  │  ├─ components/
+│  │  │  ├─ ParameterFader.tsx    # Vertical fader (linear / log skew, inverted option)
+│  │  │  ├─ HorizontalParameter.tsx
+│  │  │  ├─ ModeSelector.tsx      # Tab-style toggle for VCA / Opto / FET / Vari-Mu
+│  │  │  ├─ RatioGraph.tsx        # Real-time transfer curve with operating-point dot
+│  │  │  ├─ VUMeter.tsx           # Peak / RMS / Momentary meters
+│  │  │  ├─ WebTransportBar.tsx   # Web-demo only: play / pause / seek / loop / bypass / file upload
+│  │  │  └─ ...
+│  │  ├─ bridge/juce.ts           # Plugin: juce-framework-frontend-mirror wrapper
+│  │  ├─ bridge/web/              # Web demo: Vite alias targets
+│  │  │  ├─ WebAudioEngine.ts     # AudioContext + worklet bridge
+│  │  │  ├─ juce-shim.ts          # Parameter-state drop-in for the frontend-mirror API
+│  │  │  └─ ...
+│  │  └─ hooks/useJuceParam.ts    # Reactive APVTS subscription (useSyncExternalStore)
+│  ├─ public-web/                 # Web-demo static assets (WASM, worklet, sample.mp3)
+│  ├─ vite.config.ts              # Plugin build (embedded into the native binary)
+│  ├─ vite.config.web.ts          # Web-demo SPA build
+│  ├─ firebase.json / .firebaserc # Firebase Hosting config (project: zerocomp-demo)
 │  └─ package.json
 ├─ cmake/               # Version.cmake, icon
 ├─ scripts/             # AAX signing helper, WebView2 download, etc.
 ├─ JUCE/                # Submodule
 ├─ aax-sdk/             # Optional — place the AAX SDK here to enable AAX builds
 ├─ installer.iss        # Inno Setup script for Windows installer
-├─ build_windows.ps1    # Windows release build pipeline
+├─ build_windows.ps1    # Windows release build pipeline (WebUI + VST3 / AAX / Standalone + signing + installer)
 ├─ build_macos.zsh      # macOS release build pipeline
 ├─ VERSION              # Single source of truth for the version string
 └─ LICENSE
@@ -147,4 +229,4 @@ Plugin source: see `LICENSE`. Third-party SDKs (JUCE / VST3 / AAX / WebView2 etc
 
 ## Credits
 
-Developed by **Jun Murakami**. Built on **JUCE** with an embedded **WebView2 / WKWebView** frontend.
+Developed by **Jun Murakami**. Built on **JUCE** with an embedded **WebView2 / WKWebView** frontend, and a WebAssembly build of the same DSP for the browser demo.
