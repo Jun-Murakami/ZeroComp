@@ -90,17 +90,16 @@ function App() {
   const { value: thresholdDbVal } = useJuceSliderValue('THRESHOLD');
   const { value: ratioVal } = useJuceSliderValue('RATIO');
   const { value: kneeDbVal } = useJuceSliderValue('KNEE_DB');
-  const { value: outputGainDbVal } = useJuceSliderValue('OUTPUT_GAIN');
   const { value: autoMakeupOn, setValue: setAutoMakeup } = useJuceToggleValue('AUTO_MAKEUP', false);
 
   // Auto Makeup 時の自動補償量（ハーフ補償、DSP 側と同じ式）。
   //   makeup_dB = -threshold * (1 - 1/ratio) * 0.5
+  //  グラフのカーブはこの値だけ上にシフトする。Output Gain はグラフに反映しない
+  //  （Output は単なる post-comp trim で、コンプの静的カーブ自体を変えるものではないため）。
   const autoMakeupDb = autoMakeupOn
     ? Math.max(0, -thresholdDbVal * (1 - 1 / Math.max(1, ratioVal)) * 0.5)
     : 0;
-  // グラフのシフト量は「post-comp の全体ゲイン」= Auto Makeup + Output Gain トリム。
-  //  これで Output フェーダーを動かすとカーブがライブで追従し、Auto Makeup と合算された実効曲線が見える。
-  const makeupDbDisplay = autoMakeupDb + outputGainDbVal;
+  const makeupDbDisplay = autoMakeupDb;
 
   const [graphInDb, setGraphInDb] = useState(MIN_DB);
 
