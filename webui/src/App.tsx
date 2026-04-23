@@ -21,6 +21,7 @@ import { useGlobalZoomGuard } from './hooks/useGlobalZoomGuard';
 import { GlobalDialog } from './components/GlobalDialog';
 import LicenseDialog from './components/LicenseDialog';
 import { WebTransportBar } from './components/WebTransportBar';
+import { WebDemoMenu } from './components/WebDemoMenu';
 
 const IS_WEB_MODE = import.meta.env.VITE_RUNTIME === 'web';
 import type { MeterUpdateData } from './types';
@@ -1013,6 +1014,9 @@ function App() {
 
       <LicenseDialog open={licenseOpen} onClose={closeLicenseDialog} />
       <GlobalDialog />
+
+      {/* Web デモ時のみ右下にハンバーガーメニュー（Drawer 含めて条件付きマウント） */}
+      {IS_WEB_MODE && <WebDemoMenu />}
     </ThemeProvider>
   );
 }
