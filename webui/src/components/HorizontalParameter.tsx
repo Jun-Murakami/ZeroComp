@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Input, Slider, Typography } from '@mui/material';
+import { Box, Input, Slider, Typography,useMediaQuery } from '@mui/material';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
 
 type SkewKind = 'linear' | 'log';
@@ -92,6 +92,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
       applyValue(defaultValue);
     }
   };
+  
+  const isMobile = useMediaQuery('(max-width: 640px)');
 
   return (
     <Box
@@ -101,7 +103,7 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
         alignItems: 'center',
         columnGap: 0.5,
         width: '100%',
-        py: 0.5,
+        py: isMobile ? 0 : 0.5,
       }}
     >
       <Typography
@@ -128,9 +130,11 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
           alignItems: 'center',
           minWidth: 0,
           px: '6px', // thumb 半径 = 6px。レール端で thumb が親からはみ出ないように。
-          // 下にマーカーラベルがあるので、そのぶん上にも余白を足して thumb を行の視覚的中央に合わせる
-          pt: '10px',
-          pb: '14px',
+          // 縦スペースをさらに節約: marker ラベルを thumb 下端と重ねる配置。
+          //  pb=2 なので marker(height:10, mt:-8) が thumb 領域に 4px 食い込む。
+          //  thumb が marker 位置に来た瞬間だけラベルが一時的に重なるが UX 許容範囲。
+          pt: isMobile ? '0px' : '10px',
+          pb: isMobile ? '0px' : '14px',
         }}
       >
         <Slider
@@ -176,10 +180,12 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
               position: 'absolute',
               left: '6px',
               right: '6px',
+              // marker の上端を slider box 下端より 8px 上に置く（= rail 中心より 2px 下）。
+              //  これで「レール下の数字ラベルがすぐ下に見える」密な見た目になる。
               top: '100%',
-              mt: '-12px',
+              mt: isMobile ? '-8px' : '-12px',
               pointerEvents: 'none',
-              height: 12,
+              height: isMobile ? 8 : 12,
             }}
           >
             {marks.map((m) => {
@@ -187,11 +193,14 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
               return (
                 <Typography
                   key={m.value}
+                  component='span'
                   sx={{
                     position: 'absolute',
                     left: `${pct}%`,
                     transform: 'translateX(-50%)',
-                    fontSize: '0.6rem',
+                    top: isMobile ? -8 : 4,
+                    margin: isMobile ? 0 : undefined,
+                    fontSize: isMobile ? '0.55rem' : '0.6rem',
                     color: 'text.secondary',
                     lineHeight: 1,
                     userSelect: 'none',

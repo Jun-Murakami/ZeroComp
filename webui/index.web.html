@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZeroComp — Web Demo</title>
+    <meta name="description" content="A zero-latency broadcast-oriented compressor with 4 analog-flavored modes. JUCE plugin DSP running in the browser via WebAssembly." />
+    <meta property="og:title" content="ZeroComp — Web Demo" />
+    <meta property="og:description" content="A zero-latency compressor with VCA / Opto / FET / Vari-Mu modes. DSP compiled to WebAssembly, running in your browser." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#606F77" />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background: #606F77;
+      }
+      #splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #606F77;
+        z-index: 9999;
+        transition: opacity 150ms ease;
+      }
+      #splash.hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="splash" aria-hidden="true"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

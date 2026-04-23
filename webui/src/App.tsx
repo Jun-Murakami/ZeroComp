@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Button, Paper, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Paper, Tooltip, Typography, useMediaQuery } from '@mui/material';
 import { CssBaseline, ThemeProvider } from '@mui/material';
 import { juceBridge } from './bridge/juce';
 import { useJuceComboBoxIndex, useJuceSliderValue, useJuceToggleValue } from './hooks/useJuceParam';
@@ -18,8 +18,9 @@ import {
 import { useHostShortcutForwarding } from './hooks/useHostShortcutForwarding';
 import { GlobalDialog } from './components/GlobalDialog';
 import LicenseDialog from './components/LicenseDialog';
+import { WebTransportBar } from './components/WebTransportBar';
 
-const IS_WEB_MODE = false;
+const IS_WEB_MODE = import.meta.env.VITE_RUNTIME === 'web';
 import type { MeterUpdateData } from './types';
 import './App.css';
 
@@ -36,6 +37,13 @@ const MODE_LABEL: Record<MeterMode, string> = {
 
 function App() {
   useHostShortcutForwarding();
+
+  // スマホ幅（~640px 以下）を検出。プラグイン版は常に desktop レイアウトなので、Web デモ時だけ効かせる。
+  //  mobile レイアウトでは:
+  //    - カード高さを auto にする（縦スクロール許容）
+  //    - 上段: 3 フェーダー (Threshold / Ratio / Output) を 1 行に並べ、グラフ+メーターを 2 行目に回す
+  //    - 下段の 2 カラム grid を 1 カラムに畳む
+  const isMobile = useMediaQuery('(max-width: 640px)') && IS_WEB_MODE;
 
   const [inL, setInL] = useState(MIN_DB);
   const [inR, setInR] = useState(MIN_DB);
@@ -218,7 +226,11 @@ function App() {
   }, []);
 
   // フェーダー/メーターの縦長部分の高さ。ヘッダ36 + hold行18 + ボタン26 + 余白 = 約88 差引
-  const faderHeight = Math.max(120, Math.floor(mainSize.height - 72));
+  //  モバイルでは折り返しレイアウトになるので mainSize からの計算は当てにならない → 固定値。
+  //  ユーザ要望で、モバイル時はデスクトップ比 2/3 ぶん（140 × 2/3 ≈ 94）に縮めて小画面に収まるように。
+  const faderHeight = isMobile
+    ? 94
+    : Math.max(120, Math.floor(mainSize.height - 72));
 
   // グラフ: 左半分の幅いっぱい × faderHeight に広げる（メーターバーと縦を揃えつつ、横は余った領域全てを使う）。
   //  幅と高さが異なると非正方形になるが、内部は dB 空間で描画しているため縦横比が崩れても意味は保たれる。
@@ -311,12 +323,21 @@ function App() {
             }
         }
       >
+        {/* Web デモモード時のみ、プラグインカードの外に再生用トランスポートバーを表示 */}
+        {IS_WEB_MODE && (
+          <Box sx={{ width: '100%', maxWidth: 720 }}>
+            <WebTransportBar />
+          </Box>
+        )}
+
         <Box
           sx={IS_WEB_MODE
             ? {
                 width: '100%',
                 maxWidth: 720,
-                height: 540,
+                // モバイルでは内容に合わせて伸ばす（縦スクロール許容）。
+                height: isMobile ? 'auto' : 470,
+                minHeight: isMobile ? 600 : undefined,
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
@@ -357,29 +378,34 @@ function App() {
               px: 2,
               pb: 1,
               mb: 1,
-              flex: 1,
+              // モバイルではカード高さ auto 化に合わせ flex:1 を外し、内容に追従させる
+              flex: isMobile ? 'none' : 1,
               minHeight: 0,
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'stretch',
-              gap: 2,
+              // モバイルでは divider も廃したのでメイン段と下段の gap を詰める（16 → 6px）
+              gap: isMobile ? 0.75 : 2,
             }}
           >
             <Box
               ref={mainRef}
               sx={{
                 width: '100%',
-                flex: 1,
+                flex: isMobile ? 'none' : 1,
                 minHeight: 0,
                 display: 'flex',
+                // モバイルは折り返して 2 段構成（行1: 3 フェーダー、行2: グラフ+メーター）
+                flexWrap: isMobile ? 'wrap' : 'nowrap',
                 gap: 1,
+                rowGap: isMobile ? 1.5 : 1,
                 alignItems: 'flex-start',
                 justifyContent: 'space-between',
                 position: 'relative',
               }}
             >
-              {/* 左: Threshold + Ratio */}
-              <Box sx={{ display: 'flex', gap: 1 }}>
+              {/* 左: Threshold + Ratio （desktop: order 0 = 左端 / mobile: order 1 = 行 2 左側） */}
+              <Box sx={{ display: 'flex', gap: 1, order: isMobile ? 1 : 0 }}>
                 <ParameterFader
                   parameterId='THRESHOLD'
                   label='THRESHOLD'
@@ -426,8 +452,16 @@ function App() {
               {/* 中央: 左半分 = Graph、右半分 = メーター群（IN/GR/OUT）+ ボタン。
                   両ハーフを flex: 1 で 50/50 分割。ウィンドウ幅を広げると両方が比例拡大。
                   左半分の幅がメーター高さを超える場合、グラフは正方形のまま中央寄せで表示し、
-                  余白は左半分の内側で吸収する（バーの下端を切らせない）。 */}
-              <Box sx={{ display: 'flex', flex: 1, minWidth: 0, gap: 1, alignItems: 'flex-start' }}>
+                  余白は左半分の内側で吸収する（バーの下端を切らせない）。
+                  モバイル時は order: 0 で行 1 を占有（flex-basis 100% で全幅）。faders は下段に折り返す。 */}
+              <Box sx={{
+                display: 'flex',
+                flex: isMobile ? '1 1 100%' : 1,
+                minWidth: 0,
+                gap: 1,
+                alignItems: 'flex-start',
+                order: isMobile ? 0 : 1,
+              }}>
                 {/* 左半分: グラフ領域（幅いっぱい × faderHeight）+ 直下に Auto Makeup トグル */}
                 <Box
                   ref={leftHalfRef}
@@ -684,8 +718,9 @@ function App() {
                 </Box>
               </Box>
 
-              {/* 右: Output Gain — Auto Makeup ON の場合はその上に ± トリムとして加算される */}
-              <Box>
+              {/* 右: Output Gain — Auto Makeup ON の場合はその上に ± トリムとして加算される。
+                  モバイル時は order: 2 で、行 2 右端（Threshold/Ratio と同じ行）に並ぶ。 */}
+              <Box sx={{ order: isMobile ? 2 : 2 }}>
                 <ParameterFader
                   parameterId='OUTPUT_GAIN'
                   label='OUTPUT'
@@ -708,19 +743,20 @@ function App() {
               </Box>
             </Box>
 
-            {/* 下段: 2 カラム構成
+            {/* 下段: デスクトップは 2 カラム、モバイルは 1 カラムに畳む。
                 左カラム: Knee（上）/ MODE（下）
-                右カラム: Attack（上）/ Release（下） */}
+                右カラム: Attack（上）/ Release（下）
+                モバイルではセクション間の視覚的な区切りが既に十分なので divider を消す。 */}
             <Box
               sx={{
                 width: '100%',
-                pt: 1,
-                borderTop: '1px solid',
+                pt: isMobile ? 0 : 1,
+                borderTop: isMobile ? 'none' : '1px solid',
                 borderColor: 'divider',
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
+                gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
                 columnGap: 3,
-                rowGap: 0.25,
+                rowGap: isMobile ? 0 : 0.25,
               }}
             >
               {/* 左カラム */}
@@ -755,7 +791,7 @@ function App() {
               </Box>
 
               {/* 右カラム */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : 0.25, minWidth: 0 }}>
                 <HorizontalParameter
                   parameterId='ATTACK_MS'
                   label='Attack'
@@ -815,13 +851,22 @@ function App() {
         </Box>
 
         {IS_WEB_MODE && (
+          <>
           <Typography
             variant='caption'
             color='text.secondary'
-            sx={{ mt: 1, textAlign: 'center', maxWidth: 720, lineHeight: 1.8, px: 2 }}
+            sx={{ mt: isMobile ? 0 : 1, textAlign: 'center', maxWidth: 720, lineHeight: 1.8, px: 2 }}
           >
             ZeroComp — zero-latency broadcast-oriented compressor.
           </Typography>
+          <Typography
+            variant='caption'
+            color='text.secondary'
+            sx={{ mt: isMobile ? -1 : 0, textAlign: 'center', maxWidth: 720, lineHeight: 1, px: 2 }}
+          >
+            ゼロレイテンシーのコンプレッサーです。
+          </Typography>
+          </>
         )}
       </Box>
 

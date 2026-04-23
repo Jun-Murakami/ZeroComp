@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite --config vite.config.web.ts",
     "prebuild": "license-checker --production --json --out src/assets/licenses.json",
     "build": "tsc -b && vite build",
+    "build:web": "vite build --config vite.config.web.ts",
     "lint": "eslint .",
     "preview": "vite preview",
-    "licenses": "license-checker --production --json --out src/assets/licenses.json"
+    "preview:web": "vite preview --config vite.config.web.ts",
+    "licenses": "license-checker --production --json --out src/assets/licenses.json",
+    "deploy:web": "npm run build:web && firebase deploy --only hosting"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
