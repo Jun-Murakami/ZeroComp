@@ -14,6 +14,7 @@ import LoopIcon from '@mui/icons-material/Loop';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 import { webAudioEngine } from '../bridge/web/WebAudioEngine';
+import { webBridge } from '../bridge/web/WebBridgeManager';
 
 const formatTime = (sec: number): string => {
   if (!isFinite(sec) || sec < 0) sec = 0;
@@ -30,7 +31,12 @@ export const WebTransportBar: React.FC = () => {
   const [bypass, setBypass] = useState(false);
   const [sourceName, setSourceName] = useState('sample.mp3');
   const [isDragging, setIsDragging] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  // 再生ボタン押下→（初回のみ AudioContext 生成 + WASM ロード + sample.mp3 デコード）
+  //  が完了するまで、再生ボタンをスピナーに差し替えて無効化する。
+  //  iOS WebKit はページロード時に AudioContext を作ると suspended のまま固まるため、
+  //  初期状態は false（タップ可能）で始め、初回タップで true に切り替わる。
+  //  ユーザがファイルを差し替える間も同じスピナー表示を出す。
+  const [isLoading, setIsLoading] = useState(false);
   const draggedPosRef = useRef(0);
 
   useEffect(() => {
@@ -60,8 +66,25 @@ export const WebTransportBar: React.FC = () => {
 
   const handlePlayPause = async () => {
     if (isLoading) return;
-    if (isPlaying) webAudioEngine.pause();
-    else await webAudioEngine.play();
+    if (isPlaying) {
+      webAudioEngine.pause();
+      return;
+    }
+    // iOS WebKit 対策: ensureStarted() の冒頭（new AudioContext + resume + 無音 start）は
+    //  このジェスチャ同期フレーム内で実行される必要がある。**ここで await を挟まず**に
+    //  同期呼び出しし、その戻り値 Promise を後から await する。
+    const firstTap = !webBridge.isStarted();
+    if (firstTap) setIsLoading(true);
+    const ready = webBridge.ensureStarted();
+    try {
+      await ready;
+    } catch {
+      if (firstTap) setIsLoading(false);
+      return;
+    }
+    // sample 404 等で sourceLoaded が来ず spinner が残るケースを明示的に解除。
+    if (firstTap) setIsLoading(false);
+    await webAudioEngine.play();
   };
 
   const handleLoopToggle = () => {
@@ -86,6 +109,10 @@ export const WebTransportBar: React.FC = () => {
   };
 
   const handleFilePick = async () => {
+    // iOS WebKit 対策: Play より先に Upload をタップされた場合でも、
+    //  このジェスチャ同期フレーム内で audio unlock を成立させておく。
+    const readyPromise = webBridge.ensureStarted();
+
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'audio/*,.wav,.mp3,.flac,.m4a,.aac,.ogg';
@@ -95,7 +122,11 @@ export const WebTransportBar: React.FC = () => {
       const file = input.files?.[0];
       input.remove();
       if (file) {
+        // 差し替え中は再生ボタンをスピナーに戻す（sourceLoaded で解除）
         setIsLoading(true);
+        // 初回タップなら sample.mp3 プリロードまで待ってから差し替える
+        //  （audioContext.decodeAudioData には AudioContext が必要）
+        try { await readyPromise; } catch { /* fallthrough: try anyway */ }
         await webAudioEngine.loadSampleFromFile(file);
       }
     }, { once: true });

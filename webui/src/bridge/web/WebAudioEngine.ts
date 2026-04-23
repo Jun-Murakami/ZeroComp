@@ -41,20 +41,68 @@ export class WebAudioEngine
   private sourceLoaded = false;
 
   private initialized = false;
+  private startPromise: Promise<void> | null = null;
   private initResolvers: Array<() => void> = [];
 
-  async initialize(): Promise<void>
+  /**
+   * 初回起動。**必ずユーザタップ/クリックのハンドラから同期的に**呼ぶこと。
+   *
+   * iOS WebKit の unlock 条件:
+   *   1. `new AudioContext()` をジェスチャ同期フレーム内で実行
+   *   2. 同じフレームで `resume()` の Promise を発行（fire-and-forget ではなく
+   *      戻り Promise を保持して重い init より前に await する）
+   *   3. 同じフレームで無音 BufferSource を start する。1 サンプルでは
+   *      unlock にカウントされない iOS 版があるため、ネイティブ sampleRate
+   *      で 128 サンプル以上を再生する
+   *
+   * 重い init（WASM / sample.mp3 ロード）に入る前に resume の完了を待つことで、
+   * ジェスチャ失効後に `ensureAudioContext()` が再 resume を試みて iOS に黙殺
+   * されるケースを回避する。
+   */
+  startFromUserGesture(): Promise<void>
   {
-    if (this.initialized) return;
+    if (this.startPromise) return this.startPromise;
+
+    // ---- 同期フレーム: iOS 向け audio unlock ----
+    // sampleRate はハードウェア任せ。固定すると HW が 44.1k の iOS で起動失敗する。
+    const ctx = new AudioContext();
+    this.audioContext = ctx;
+
+    // ジェスチャ同期で resume を発行。戻り Promise は捨てず、重い init より
+    // 前に await する（fire-and-forget だと古い iOS で昇格しない実例あり）。
+    const resumed = ctx.resume();
+
+    // 1 サンプル (22050 Hz) だと unlock にカウントされない iOS 版があるため、
+    // ネイティブ sampleRate で 128 サンプル分の無音を prime する。
+    const primeFrames = 128;
+    const silent = ctx.createBuffer(1, primeFrames, ctx.sampleRate);
+    const src = ctx.createBufferSource();
+    src.buffer = silent;
+    src.connect(ctx.destination);
+    src.start(0);
+
+    // ---- 以降は非同期（ジェスチャスコープを抜けても OK） ----
+    this.startPromise = (async () => {
+      // resume が先に完了していないと worklet 接続後も context が suspended
+      // のまま出力が捨てられる。失敗時は completeInit 側の動作に任せる。
+      try { await resumed; } catch { /* ignore */ }
+      await this.completeInit();
+    })();
+    return this.startPromise;
+  }
+
+  private async completeInit(): Promise<void>
+  {
+    const ctx = this.audioContext;
+    if (!ctx) return;
     try
     {
-      this.audioContext = new AudioContext({ sampleRate: 48000 });
-      await this.audioContext.audioWorklet.addModule('/worklet/dsp-processor.js');
+      await ctx.audioWorklet.addModule('/worklet/dsp-processor.js');
 
-      this.workletNode = new AudioWorkletNode(this.audioContext, 'dsp-processor', {
+      this.workletNode = new AudioWorkletNode(ctx, 'dsp-processor', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
       });
-      this.workletNode.connect(this.audioContext.destination);
+      this.workletNode.connect(ctx.destination);
       this.workletNode.port.onmessage = (e) => this.handleWorkletMessage(e.data);
 
       // WASM ロード
@@ -81,6 +129,7 @@ export class WebAudioEngine
   }
 
   isInitialized(): boolean { return this.initialized; }
+  isStarted(): boolean { return this.startPromise !== null; }
 
   async ensureAudioContext(): Promise<void>
   {

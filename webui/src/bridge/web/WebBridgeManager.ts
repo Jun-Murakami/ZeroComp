@@ -11,28 +11,45 @@ class WebBridgeManager
 {
   private initialized = false;
   private initCallbacks: Array<() => void> = [];
+  private startPromise: Promise<void> | null = null;
 
   constructor()
   {
-    void this.initialize();
+    // iOS WebKit 対策: AudioContext の生成はユーザジェスチャ内で行う必要がある。
+    // ページロード時（= ジェスチャ外）で作ると suspended のまま固まり、
+    // あとから resume() しても音が出ない版が存在する。
+    // 初回タップで `ensureStarted()` が呼ばれるまで初期化を遅延する。
   }
 
-  private async initialize(): Promise<void>
+  /**
+   * 初回起動。**必ずユーザジェスチャ（tap/click）のハンドラから同期的に**呼ぶこと。
+   * 冒頭で `webAudioEngine.startFromUserGesture()` を同期呼び出しすることで
+   * iOS の audio unlock を成立させ、その後 sample.mp3 のプリロードまで続行する。
+   *
+   * 2 回目以降の呼び出しでは同じ Promise を返す（idempotent）。
+   */
+  public ensureStarted(): Promise<void>
   {
-    try
-    {
-      await webAudioEngine.initialize();
-      // デモソース（sample.mp3）を自動プリロード
-      await webAudioEngine.loadSampleFromUrl('/audio/sample.mp3', 'sample.mp3');
-    }
-    catch (err)
-    {
-      console.error('[WebBridge] Initialization failed:', err);
-    }
-    this.initialized = true;
-    this.initCallbacks.forEach((cb) => cb());
-    this.initCallbacks = [];
+    if (this.startPromise) return this.startPromise;
+
+    // 同期フレームでの unlock はここで実行される（最初の await より前）。
+    const unlocked = webAudioEngine.startFromUserGesture();
+
+    this.startPromise = unlocked
+      .then(() => webAudioEngine.loadSampleFromUrl('/audio/sample.mp3', 'sample.mp3'))
+      .then(() => {
+        this.initialized = true;
+        this.initCallbacks.forEach((cb) => cb());
+        this.initCallbacks = [];
+      })
+      .catch((err) => {
+        console.error('[WebBridge] Initialization failed:', err);
+      });
+
+    return this.startPromise;
   }
+
+  public isStarted(): boolean { return this.startPromise !== null; }
 
   public whenReady(callback: () => void): void
   {
