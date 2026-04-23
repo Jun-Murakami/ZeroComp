@@ -104,6 +104,7 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
         columnGap: 0.5,
         width: '100%',
         py: isMobile ? 0 : 0.5,
+        mt: isMobile ? -1 : 0,
       }}
     >
       <Typography
