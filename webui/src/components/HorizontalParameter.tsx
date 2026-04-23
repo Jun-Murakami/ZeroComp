@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Input, Slider, Typography,useMediaQuery } from '@mui/material';
+import { Box, Input, Slider, Typography,useMediaQuery, useTheme } from '@mui/material';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
 
 type SkewKind = 'linear' | 'log';
@@ -92,8 +92,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
       applyValue(defaultValue);
     }
   };
-  
-  const isMobile = useMediaQuery('(max-width: 640px)');
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('xs'));
 
   return (
     <Box

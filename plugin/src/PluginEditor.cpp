@@ -170,34 +170,6 @@ static juce::WebBrowserComponent::Options makeWebViewOptionsWithPreLaunchArgs(co
     return juce::WebBrowserComponent::Options{};
 }
 
-// ProTools AAX (Windows) で initial setSize を logical → physical へ逆補正するためのスケール。
-//  WebView2 には `--force-device-scale-factor=1` を注入しているのでコンテンツは常に 1x。
-//  しかしホスト側ウィンドウはディスプレイ DPI 倍で計算されるため、setSize(logical) の
-//  結果コンテンツがウィンドウに対して小さく見える。そこで Pro Tools AAX のときだけ
-//  system DPI 値を読み、setSize に 1/scale を掛けて物理ピクセルで揃える。
-//  非 Pro Tools / 非 Windows / DPI=96 の環境では 1.0 を返すので従来動作と一致する。
-static double queryProToolsAaxDpiScale() noexcept
-{
-   #if defined(JUCE_WINDOWS)
-    if (juce::PluginHostType().isProTools()
-        && juce::PluginHostType::getPluginLoadedAs() == juce::AudioProcessor::WrapperType::wrapperType_AAX)
-    {
-        HMODULE user32 = ::GetModuleHandleW(L"user32.dll");
-        if (user32 != nullptr)
-        {
-            using GetDpiForSystemFn = UINT (WINAPI*)();
-            auto pGetDpiForSystem = reinterpret_cast<GetDpiForSystemFn>(
-                ::GetProcAddress(user32, "GetDpiForSystem"));
-            if (pGetDpiForSystem != nullptr)
-            {
-                const UINT dpi = pGetDpiForSystem();
-                if (dpi > 0) return static_cast<double>(dpi) / 96.0;
-            }
-        }
-    }
-   #endif
-    return 1.0;
-}
 
 //==============================================================================
 
@@ -305,25 +277,15 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
 
     addAndMakeVisible(webView);
 
-    // Pro Tools AAX + 高 DPI 環境で、WebView2 コンテンツは 1x（--force-device-scale-factor=1）
-    //  のまま、ホスト側ウィンドウだけ DPI 倍で割り当てられる問題をキャンセルするため、
-    //  initial setSize と最小サイズを 1/scale でプリスケールする。
-    //  非 Pro Tools / 非 Windows / 100% DPI ではスケール=1.0 なので従来と同じ動作。
-    const double aaxDpi = queryProToolsAaxDpiScale();
-    auto scaleDown = [aaxDpi](int v) noexcept
-    {
-        return static_cast<int>(std::round(static_cast<double>(v) / aaxDpi));
-    };
-
     // 初期サイズ
-    setSize(scaleDown(720), scaleDown(500));
+    setSize(720, 500);
 
     // リサイズ可能に（プラグイン/スタンドアロン共通）
     //  - OS ウィンドウ四辺 / ResizableCornerComponent / WebUI オーバーレイ
     //    すべて同じ最小・最大サイズを適用（window_action 側のクランプもこの定数を参照）
     setResizable(true, true);
-    setResizeLimits(scaleDown(kMinWidth), scaleDown(kMinHeight), kMaxWidth, kMaxHeight);
-    resizerConstraints.setSizeLimits(scaleDown(kMinWidth), scaleDown(kMinHeight), kMaxWidth, kMaxHeight);
+    setResizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+    resizerConstraints.setSizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
 
     // リサイズグリッパー。WebView よりも前面に置き、WebUI 側の overlay から
     //   window_action.resizeTo を受けた時にも本体を正しく追従させる。
@@ -339,6 +301,18 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
         webView.goToURL(LOCAL_DEV_SERVER_ADDRESS);
     else
         webView.goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
+
+    // 一部ホスト（Pro Tools AAX など）はコンストラクタ中の setSize を無視して
+    //  ホスト側の保存サイズで最初の resized() を呼ぶことがあり、結果として
+    //  kMinWidth/kMinHeight を割った状態で開いてレイアウトが崩れる。
+    //  次のメッセージループで最小値を割っていたら初期サイズを強制する。
+    juce::Component::SafePointer<ZeroCompAudioProcessorEditor> safeSelf { this };
+    juce::MessageManager::callAsync([safeSelf]()
+    {
+        if (safeSelf == nullptr) return;
+        if (safeSelf->getWidth() < kMinWidth || safeSelf->getHeight() < kMinHeight)
+            safeSelf->setSize(720, 500);
+    });
 
     startTimerHz(30);
 }

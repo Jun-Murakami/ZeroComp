@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Button, Paper, Tooltip, Typography, useMediaQuery } from '@mui/material';
-import { CssBaseline, ThemeProvider } from '@mui/material';
+import { CssBaseline, ThemeProvider, useTheme } from '@mui/material';
 import { juceBridge } from './bridge/juce';
 import { useJuceComboBoxIndex, useJuceSliderValue, useJuceToggleValue } from './hooks/useJuceParam';
 import { darkTheme } from './theme';
@@ -43,7 +43,8 @@ function App() {
   //    - カード高さを auto にする（縦スクロール許容）
   //    - 上段: 3 フェーダー (Threshold / Ratio / Output) を 1 行に並べ、グラフ+メーターを 2 行目に回す
   //    - 下段の 2 カラム grid を 1 カラムに畳む
-  const isMobile = useMediaQuery('(max-width: 640px)') && IS_WEB_MODE;
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('xs')) && IS_WEB_MODE;
 
   const [inL, setInL] = useState(MIN_DB);
   const [inR, setInR] = useState(MIN_DB);
