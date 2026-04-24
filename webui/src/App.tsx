@@ -21,7 +21,7 @@ import { useGlobalZoomGuard } from './hooks/useGlobalZoomGuard';
 import { GlobalDialog } from './components/GlobalDialog';
 import LicenseDialog from './components/LicenseDialog';
 import { WebTransportBar } from './components/WebTransportBar';
-import { WebDemoMenu } from './components/WebDemoMenu';
+import { WebDemoMenu, MENU_WIDE_QUERY, MENU_DRAWER_WIDTH } from './components/WebDemoMenu';
 
 const IS_WEB_MODE = import.meta.env.VITE_RUNTIME === 'web';
 import type { MeterUpdateData } from './types';
@@ -49,6 +49,8 @@ function App() {
   //    - 下段の 2 カラム grid を 1 カラムに畳む
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm')) && IS_WEB_MODE;
+  // 1200px 以上のときは右に常時表示ドロワーを置くので外枠の右パディングを拡大する
+  const wideDrawerDocked = useMediaQuery(MENU_WIDE_QUERY) && IS_WEB_MODE;
 
   const [inL, setInL] = useState(MIN_DB);
   const [inR, setInR] = useState(MIN_DB);
@@ -343,7 +345,9 @@ function App() {
               alignItems: 'center',
               justifyContent: 'center',
               py: 4,
-              px: 2,
+              pl: 2,
+              // 1200px 以上で右に常時表示ドロワーを置くため、drawer 幅ぶん右パディング確保
+              pr: wideDrawerDocked ? `${MENU_DRAWER_WIDTH}px` : 2,
               gap: 1.5,
             }
           : {
