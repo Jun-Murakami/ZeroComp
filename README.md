@@ -2,6 +2,9 @@
 
 A **zero-latency** feedforward compressor for broadcast, streaming, and live production, with four analog-flavored modes (VCA / Opto / FET / Vari-Mu). Built with JUCE + WebView (Vite / React 19 / MUI 7). Ships as VST3 / AU / AAX / Standalone, plus a WebAssembly browser demo that reuses the exact same DSP.
 
+You can find the demo site running on WebAssembly here.
+https://zerocomp-demo.web.app/
+
 ## Highlights
 
 - **0-sample latency** — no lookahead, no oversampling. Instant attack with smoothed release envelope. Suitable for live/broadcast where monitoring delay is unacceptable.
