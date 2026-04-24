@@ -27,17 +27,27 @@ interface MenuSection { readonly title: string; readonly links: ReadonlyArray<Me
 
 const MENU_SECTIONS: ReadonlyArray<MenuSection> = [
   {
+    title: 'Demo Site',
+    links: [
+      { label: 'ZeroEQ',    href: 'https://zeroeq-demo.web.app/' },
+      { label: 'ZeroComp',  href: 'https://zerocomp-demo.web.app/' },
+      { label: 'ZeroLimit', href: 'https://zerolimit-demo.web.app/' },
+    ],
+  },
+  {
     title: 'Download Plugin',
     links: [
-      { label: 'ZeroLimit', href: 'https://jun-murakami.web.app/#zeroLimit' },
+      { label: 'ZeroEQ',    href: 'https://jun-murakami.web.app/#zeroEq' },
       { label: 'ZeroComp',  href: 'https://jun-murakami.web.app/#zeroComp' },
+      { label: 'ZeroLimit', href: 'https://jun-murakami.web.app/#zeroLimit' },
     ],
   },
   {
     title: 'Source Code',
     links: [
-      { label: 'ZeroLimit', href: 'https://github.com/Jun-Murakami/ZeroLimit' },
+      { label: 'ZeroEQ',    href: 'https://github.com/Jun-Murakami/ZeroEQ' },
       { label: 'ZeroComp',  href: 'https://github.com/Jun-Murakami/ZeroComp' },
+      { label: 'ZeroLimit', href: 'https://github.com/Jun-Murakami/ZeroLimit' },
     ],
   },
   {
