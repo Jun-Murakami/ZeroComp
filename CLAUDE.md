@@ -124,6 +124,36 @@ lookahead も oversampling も**使わない**。
   - 成果物: `releases/<VERSION>/ZeroComp_<VERSION>_Windows_VST3_AAX_Standalone.zip` と `ZeroComp_<VERSION>_Windows_Setup.exe`（Inno Setup 6 必須）
   - AAX 署名は `.env` に PACE 情報がある場合のみ自動実行
 
+#### WASM ビルド（Web デモ用 DSP）
+
+`wasm/src/wasm_exports.cpp` を Emscripten でビルドし、`webui/public-web/wasm/zerocomp_dsp.wasm` に配置して Vite から配信する。
+
+- 前提: emsdk が `D:/Synching/code/JUCE/emsdk` に checkout 済み。未 activate なら一度だけ以下を実行:
+  ```powershell
+  cd D:\Synching\code\JUCE\emsdk
+  python emsdk.py install latest   # 未インストールの場合のみ
+  python emsdk.py activate 5.0.4   # or latest
+  ```
+- `wasm/build.sh` は Unix bash 用（`emmake make` 前提）。**Windows では使わない**。
+  Git Bash の `which` が `emcc.bat` を解決できない + 既存 CMake キャッシュは Ninja 前提、
+  というハマりどころがあるので、Windows は PowerShell から直接 emcc を叩く:
+  ```powershell
+  & 'D:\Synching\code\JUCE\emsdk\emsdk_env.ps1'
+  cd D:\Synching\code\JUCE\ZeroComp\wasm
+  # 旧 emsdk パスで configure された古い build/ が残っているとサニティチェック失敗するので毎回消す
+  Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory build | Out-Null
+  cd build
+  emcmake cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build .
+  # WebUI 配信先にコピー（build.sh と同じ挙動）
+  Copy-Item -Force dist\zerocomp_dsp.wasm ..\dist\
+  Copy-Item -Force dist\zerocomp_dsp.wasm ..\..\webui\public-web\wasm\
+  ```
+- macOS / Linux は `wasm/build.sh` をそのまま使える（`source /path/to/emsdk_env.sh` 後に `./wasm/build.sh`）。
+- 出力サイズは Release -O3 で ~30KB。`STANDALONE_WASM=1` + `ALLOW_MEMORY_GROWTH=1`。エクスポート関数一覧は `wasm/CMakeLists.txt` の `EXPORTED_FUNCTIONS` を参照。
+- **DSP に変更を入れたら必ず WASM も再ビルドして `webui/public-web/wasm/` 配下を更新する**。WASM を更新せず `webui build` すると Web デモだけ旧ロジックのままになる。
+
 ### バージョン管理
 
 - `VERSION` ファイルで一元管理。CMake と `build_windows.ps1` がここから読む

@@ -158,8 +158,19 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
       }
 
       // ---- 波形エンベロープ ----
+      //  ZeroEQ のスペアナと揃えて縦グラデーションで塗る（上端が濃く、底にかけてフェード）。
+      //  スペアナと違い波形ラン表示にはアウトライン（境界線）は引かない。
       const pxPerSlice = cssW / len;
-      ctx.fillStyle = '#4fc3f7';
+      // 上端はテーマプライマリシアン α=1.0、上〜中段にかけて滑らかにフェードし、
+      //  下 10% 付近で一気に抜ける非線形カーブ。
+      //  中段もしっかりグラデーションが見える明るさを保ちつつ、底は暗く沈める。
+      const envGrad = ctx.createLinearGradient(0, 0, 0, cssH);
+      envGrad.addColorStop(0.00, 'rgba(79,195,247,1.00)');
+      envGrad.addColorStop(0.35, 'rgba(79,195,247,0.85)');
+      envGrad.addColorStop(0.70, 'rgba(79,195,247,0.50)');
+      envGrad.addColorStop(0.92, 'rgba(79,195,247,0.10)');
+      envGrad.addColorStop(1.00, 'rgba(79,195,247,0.02)');
+      ctx.fillStyle = envGrad;
       ctx.beginPath();
       ctx.moveTo(0, cssH);
       for (let i = 0; i < len; ++i) {
@@ -176,6 +187,7 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
 
       // ---- Threshold 超過部分のハイライト（threshold より上を薄グレーで塗り直す） ----
       //  Threshold が表示下限より下の場合（-80..-60 の領域）は画面底にクランプ扱いで線だけ引く。
+      //  エンベロープと同じく縦グラデーションで濃度を揃える。
       const yThreshold = dbToY(Math.max(MIN_DB, threshold), cssH);
       if (yThreshold > 0) {
         ctx.save();
@@ -183,7 +195,14 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
         ctx.rect(0, 0, cssW, yThreshold);
         ctx.clip();
 
-        ctx.fillStyle = 'rgba(200, 200, 200, 0.55)';
+        // グレーは控えめにして下のシアンが透けるようにする。エンベロープと同じ曲線に揃える。
+        const overGrad = ctx.createLinearGradient(0, 0, 0, cssH);
+        overGrad.addColorStop(0.00, 'rgba(160,160,160,1.00)');
+        overGrad.addColorStop(0.35, 'rgba(160,160,160,0.85)');
+        overGrad.addColorStop(0.70, 'rgba(160,160,160,0.50)');
+        overGrad.addColorStop(0.92, 'rgba(160,160,160,0.10)');
+        overGrad.addColorStop(1.00, 'rgba(160,160,160,0.02)');
+        ctx.fillStyle = overGrad;
         ctx.beginPath();
         ctx.moveTo(0, cssH);
         for (let i = 0; i < len; ++i) {
@@ -201,8 +220,16 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
       }
 
       // ---- GR を threshold 線から下方向に反転描画 ----
+      //  縦グラデーションは threshold 線起点で、下に向かってフェード。深い GR ほど薄く残る。
       if (yThreshold < cssH) {
-        ctx.fillStyle = 'rgba(255, 82, 82, 0.75)';
+        // GR も同じプロファイル: threshold 線直下は濃い赤、中段まで徐々に薄くなり、底で急抜け。
+        const grGrad = ctx.createLinearGradient(0, yThreshold, 0, cssH);
+        grGrad.addColorStop(0.00, 'rgba(255,82,82,0.75)');
+        grGrad.addColorStop(0.35, 'rgba(255,82,82,0.60)');
+        grGrad.addColorStop(0.70, 'rgba(255,82,82,0.35)');
+        grGrad.addColorStop(0.92, 'rgba(255,82,82,0.07)');
+        grGrad.addColorStop(1.00, 'rgba(255,82,82,0.02)');
+        ctx.fillStyle = grGrad;
         ctx.beginPath();
         ctx.moveTo(0, yThreshold);
         for (let i = 0; i < len; ++i) {
@@ -267,6 +294,12 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
   }, [width, height, bufferLen, isResizing]);
 
   // waveformUpdate 購読。ring buffer に書き込んで即時再描画。
+  //  イベント配信元 (C++ 側 60Hz タイマ) が描画トリガーを兼ねる。
+  //
+  //  60Hz 化のちらつき対策: 新しい slice が無い / ペイロードが空のイベントが届いた場合は
+  //  早期 return で redraw を走らせない。canvas 画素は前フレームのまま残るので、
+  //  "描画データが落ちた場合は前のフレームを保持" という挙動になる。
+  //  C++ 側も available == 0 のときは emit しないので、通常この分岐には落ちない想定。
   useEffect(() => {
     const id = juceBridge.addEventListener('waveformUpdate', (d: unknown) => {
       const wf = d as WaveformUpdateData;
@@ -274,7 +307,7 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
       const gs = wf.grDb;
       if (!ps || !gs) return;
       const n = Math.min(ps.length, gs.length);
-      if (n === 0) return;
+      if (n === 0) return;  // 前フレーム保持
 
       const peaks = peaksRef.current!;
       const grDbs = grDbRef.current!;

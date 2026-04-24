@@ -318,7 +318,9 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
             safeSelf->setSize(720, 500);
     });
 
-    startTimerHz(30);
+    // 60Hz。メーター / 波形 / DPI ポーリングの駆動源。
+    //  ディスプレイ vsync と合い、波形ラン描画が 30Hz より滑らかに見える。
+    startTimerHz(60);
 }
 
 ZeroCompAudioProcessorEditor::~ZeroCompAudioProcessorEditor()
@@ -439,14 +441,16 @@ void ZeroCompAudioProcessorEditor::timerCallback()
     pollAndMaybeNotifyDpiChange();
    #endif
 
-    // メーター減衰係数（30Hz タイマーで約 20 dB/sec のリリースカーブ相当）。
+    // メーター減衰係数（60Hz タイマで約 20 dB/sec のリリースカーブ相当）。
+    //  30Hz の 0.93 を per-second 保持率換算すると 0.93^30 ≈ 0.113。
+    //  60Hz 同等にするには x^60 = 0.113 → x ≈ 0.965。
     //  - Peak/RMS: 新値は processBlock が atomicMaxFloat で突き上げる。
-    //              UI タイマーは毎フレーム係数を掛けて徐々に戻す（アタック瞬時・リリース指数）。
+    //              UI タイマは毎フレーム係数を掛けて徐々に戻す（アタック瞬時・リリース指数）。
     //  - GR:       1.0（リダクション無し）に向かってインバース減衰する。
     //  - Momentary は内部で 400ms スライディング窓の積算を持つため decay 不要。
-    constexpr float kPeakDecay = 0.93f;
-    constexpr float kRmsDecay  = 0.93f;
-    constexpr float kGrDecay   = 0.93f;
+    constexpr float kPeakDecay = 0.965f;
+    constexpr float kRmsDecay  = 0.965f;
+    constexpr float kGrDecay   = 0.965f;
 
     auto readAndDecayMax = [](std::atomic<float>& slot, float decay) noexcept
     {
@@ -531,7 +535,9 @@ void ZeroCompAudioProcessorEditor::timerCallback()
     webView.emitEventIfBrowserIsVisible("meterUpdate", meter.get());
 
     // ---- Waveform display: FIFO からドレインしてまとめて emit ----
-    //  audio thread が 200 Hz で slice を貯めている。30 Hz タイマーなら毎フレーム数 slice 受け取る想定。
+    //  audio thread が 200 Hz で slice を貯めている。60 Hz タイマなら毎フレーム 3-4 slice 受け取る想定。
+    //  available == 0 のとき（transport 停止やコールバック不安定時）は emit しない。
+    //  これにより JS 側は前フレームの canvas 画素を保持し、60Hz 化のちらつきを防ぐ。
     {
         auto& fifo = audioProcessor.waveformFifo;
         const int available = fifo.getNumReady();
