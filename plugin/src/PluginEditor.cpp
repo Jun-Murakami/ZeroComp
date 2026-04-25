@@ -282,7 +282,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
     addAndMakeVisible(webView);
 
     // 初期サイズ
-    setSize(720, 500);
+    setSize(720, 460);
 
     // リサイズ可能に（プラグイン/スタンドアロン共通）
     //  - OS ウィンドウ四辺 / ResizableCornerComponent / WebUI オーバーレイ
@@ -315,7 +315,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
     {
         if (safeSelf == nullptr) return;
         if (safeSelf->getWidth() < kMinWidth || safeSelf->getHeight() < kMinHeight)
-            safeSelf->setSize(720, 500);
+            safeSelf->setSize(720, 460);
     });
 
     // 60Hz。メーター / 波形 / DPI ポーリングの駆動源。

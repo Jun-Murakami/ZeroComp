@@ -9,8 +9,8 @@ class ZeroCompAudioProcessorEditor : public juce::AudioProcessorEditor,
                                      private juce::Timer
 {
 public:
-    static constexpr int kMinWidth  = 520;
-    static constexpr int kMinHeight = 390;
+    static constexpr int kMinWidth  = 485;
+    static constexpr int kMinHeight = 320;
     static constexpr int kMaxWidth  = 2560;
     static constexpr int kMaxHeight = 1440;
 

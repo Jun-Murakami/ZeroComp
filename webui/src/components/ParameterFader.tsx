@@ -102,7 +102,8 @@ const StyledSlider = styled(Slider)(({ theme }) => {
 const StyledInput = styled(Input)(() => ({
   '& input': {
     padding: '2px 3px',
-    fontSize: '10px',
+    fontSize: '12px',
+    fontFamily: '"Red Hat Mono", monospace',
     textAlign: 'center',
     width: '38px',
     backgroundColor: '#252525',

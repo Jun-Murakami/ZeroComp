@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Button, Paper, Tooltip, Typography, useMediaQuery } from '@mui/material';
-import { CssBaseline, ThemeProvider, useTheme } from '@mui/material';
+import { CssBaseline, ThemeProvider } from '@mui/material';
 import { juceBridge } from './bridge/juce';
 import { useJuceComboBoxIndex, useJuceSliderValue, useJuceToggleValue } from './hooks/useJuceParam';
 import { darkTheme } from './theme';
@@ -42,13 +42,11 @@ function App() {
   useHostShortcutForwarding();
   useGlobalZoomGuard();
 
-  // スマホ幅（~640px 以下）を検出。プラグイン版は常に desktop レイアウトなので、Web デモ時だけ効かせる。
-  //  mobile レイアウトでは:
-  //    - カード高さを auto にする（縦スクロール許容）
-  //    - 上段: 3 フェーダー (Threshold / Ratio / Output) を 1 行に並べ、グラフ+メーターを 2 行目に回す
-  //    - 下段の 2 カラム grid を 1 カラムに畳む
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm')) && IS_WEB_MODE;
+  // 狭幅レイアウト（~480px 以下）の切替。
+  //  プラグイン最小幅 485px なのでプラグインは絶対に発火しないが、念のため IS_WEB_MODE 縛りで
+  //  Web デモ専用に閉じ込めて、デスクトップ実装の保護を二重化している。
+  //  mobile レイアウトでは 3 フェーダー横並び + 下段 1 カラムに畳む。
+  const isMobile = useMediaQuery('(max-width:480px)') && IS_WEB_MODE;
   // 1200px 以上のときは右に常時表示ドロワーを置くので外枠の右パディングを拡大する
   const wideDrawerDocked = useMediaQuery(MENU_WIDE_QUERY) && IS_WEB_MODE;
 
@@ -263,14 +261,16 @@ function App() {
   // フェーダー/メーターの縦長部分の高さ。ヘッダ36 + hold行18 + ボタン26 + 余白 = 約88 差引
   //  モバイルでは折り返しレイアウトになるので mainSize からの計算は当てにならない → 固定値。
   //  ユーザ要望で、モバイル時はデスクトップ比 2/3 ぶん（140 × 2/3 ≈ 94）に縮めて小画面に収まるように。
+  //  挙動確認のため最小高さ floor は一旦外している（負値だけ避ける）。
   const faderHeight = isMobile
     ? 94
-    : Math.max(120, Math.floor(mainSize.height - 72));
+    : Math.max(0, Math.floor(mainSize.height - 72));
 
   // グラフ: 左半分の幅いっぱい × faderHeight に広げる（メーターバーと縦を揃えつつ、横は余った領域全てを使う）。
   //  幅と高さが異なると非正方形になるが、内部は dB 空間で描画しているため縦横比が崩れても意味は保たれる。
-  const graphW = Math.max(80, Math.floor(leftHalfSize.width));
-  const graphH = Math.max(80, faderHeight);
+  //  挙動確認のため最小寸法 floor は一旦外している（負値だけ避ける）。
+  const graphW = Math.max(0, Math.floor(leftHalfSize.width));
+  const graphH = Math.max(0, faderHeight);
 
   // メーター群は右半分を幅いっぱいに使う。
   //  内訳: IN(L+R) + GR(広) + OUT(L+R) = 4 本の通常バー + GR バー(=通常の 2 本分)。合計 6 単位。
@@ -291,8 +291,9 @@ function App() {
     if (!dragState.current) return;
     const dx = e.clientX - dragState.current.startX;
     const dy = e.clientY - dragState.current.startY;
-    const w = Math.max(520, dragState.current.startW + dx);
-    const h = Math.max(390, dragState.current.startH + dy);
+    // 最小サイズはネイティブ側 (PluginEditor.h kMinWidth/kMinHeight) と同期させる。
+    const w = Math.max(485, dragState.current.startW + dx);
+    const h = Math.max(320, dragState.current.startH + dy);
     if (!window.__resizeRAF) {
       window.__resizeRAF = requestAnimationFrame(() => {
         window.__resizeRAF = 0;
@@ -363,6 +364,21 @@ function App() {
         {/* Web デモモード時のみ、プラグインカードの外に再生用トランスポートバーを表示 */}
         {IS_WEB_MODE && (
           <Box sx={{ width: '100%', maxWidth: 720 }}>
+            <Typography
+              variant='caption'
+              sx={{
+                display: 'block',
+                px: 1.5,
+                color: 'text.secondary',
+                fontWeight: 600,
+                letterSpacing: 1,
+                textTransform: 'uppercase',
+                fontSize: '0.65rem',
+                mb: 0.25,
+              }}
+            >
+              Input
+            </Typography>
             <WebTransportBar />
           </Box>
         )}
@@ -453,7 +469,6 @@ function App() {
                   wheelStepFine={0.1}
                   scaleMarks={[
                     { value: 0, label: '0' },
-                    { value: -6, label: '-6' },
                     { value: -12, label: '-12' },
                     { value: -24, label: '-24' },
                     { value: -40, label: '-40' },
@@ -500,12 +515,14 @@ function App() {
               }}>
                 {/* Metering / Waveform トグル（中央 flex Box の上部中央に浮かべる）。
                     CURVE / WAVEFORM ラベルは 36px ヘッダの下端にあるので、top: 0 / height: 22 の
-                    トグルとは Y 方向で衝突しない（ラベルは y≈30、トグルは y=0..22）。 */}
+                    トグルとは Y 方向で衝突しない（ラベルは y≈30、トグルは y=0..22）。
+                    mobile は Paper pt: 0 のためトグルの -4px が title 行と被るので mt を反転して
+                    中央 Box の内側に押し下げる（graph の CURVE ラベルは中央寄せで干渉しない）。 */}
                 <Box
                   sx={{
                     position: 'absolute',
                     top: 0,
-                    mt: -0.5,
+                    mt: isMobile ? 0.5 : -0.5,
                     zIndex: 2,
                     display: 'flex',
                     alignItems: 'center',
@@ -522,7 +539,7 @@ function App() {
                       aria-label='display mode'
                       sx={{
                         display: 'inline-flex',
-                        height: 22,
+                        height: 17,
                         borderRadius: 1,
                         border: '1px solid',
                         borderColor: 'divider',
@@ -600,7 +617,7 @@ function App() {
                       sx={{
                         mt: 0.5,
                         textTransform: 'none',
-                        minWidth: 128,
+                        minWidth: 115,
                         px: 1,
                         py: 0.1,
                         height: 22,
@@ -613,7 +630,7 @@ function App() {
                         '&:hover': { backgroundColor: autoMakeupOn ? 'primary.dark' : 'grey.700' },
                       }}
                     >
-                      {autoMakeupOn ? `Auto Makeup  +${autoMakeupDb.toFixed(1)} dB` : 'Auto Makeup'}
+                      {autoMakeupOn ? `Makeup  +${autoMakeupDb.toFixed(1)} dB` : 'Makeup'}
                     </Button>
                   </Tooltip>
                 </Box>
@@ -900,11 +917,13 @@ function App() {
                 display: 'grid',
                 gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
                 columnGap: 3,
-                rowGap: isMobile ? 0 : 0.25,
+                // 行間は 4px で揃える。mobile では Mode→Attack 間 (= 2 つの col Box の間) の
+                //  rowGap として効くが、PC は 2 列レイアウトなのでほぼ無視される。
+                rowGap: 0.5,
               }}
             >
               {/* 左カラム */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 0 }}>
                 <HorizontalParameter
                   parameterId='KNEE_DB'
                   label='Knee'
@@ -928,16 +947,16 @@ function App() {
                   parameterId='MODE'
                   label='Mode'
                   descriptions={[
-                    'VCA — clean, transparent',
-                    'Opto — slow, trailing release',
-                    'FET — asymmetric grit',
-                    'Vari-Mu — soft knee + even-order warmth',
+                    'Clean, Transparent',
+                    'Slow, Trailing Release',
+                    'Asymmetric Gritty',
+                    'Soft Knee + Even-order Warmth',
                   ]}
                 />
               </Box>
 
               {/* 右カラム */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : 0.25, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 0 }}>
                 <HorizontalParameter
                   parameterId='ATTACK_MS'
                   label='Attack'
@@ -952,7 +971,6 @@ function App() {
                     { value: 1, label: '1' },
                     { value: 10, label: '10' },
                     { value: 100, label: '100' },
-                    { value: 500, label: '500' },
                   ]}
                 />
                 <HorizontalParameter
@@ -970,7 +988,6 @@ function App() {
                     { value: 10, label: '10' },
                     { value: 100, label: '100' },
                     { value: 1000, label: '1k' },
-                    { value: 2000, label: '2k' },
                   ]}
                 />
               </Box>

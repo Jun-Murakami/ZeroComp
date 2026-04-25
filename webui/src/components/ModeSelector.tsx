@@ -36,7 +36,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
         alignItems: 'center',
         columnGap: 0.5,
         width: '100%',
-        py: 0.5,
+        py: 0,
       }}
     >
       <Typography

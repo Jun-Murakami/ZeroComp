@@ -164,4 +164,4 @@ lookahead も oversampling も**使わない**。
 
 - 新規インスタンス時は Threshold 0 dB（実質バイパス）、Ratio 4:1、Knee 6 dB、Attack 10 ms、Release 100 ms で立ち上がる
 - Threshold 0 dB = フルスケールでは GR 発生しない。ユーザが下げたときだけコンプが掛かる
-- プラグインウィンドウ最小 520 × 390、初期 720 × 500
+- プラグインウィンドウ最小 485 × 320、初期 720 × 460

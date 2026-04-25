@@ -1,18 +1,22 @@
 {
   "name": "zerocomp-webui",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/sync-web-demos.cjs",
     "dev": "vite",
+    "predev:web": "node scripts/sync-web-demos.cjs",
     "dev:web": "vite --config vite.config.web.ts",
-    "prebuild": "license-checker --production --json --out src/assets/licenses.json",
+    "prebuild": "node scripts/sync-web-demos.cjs && license-checker --production --json --out src/assets/licenses.json",
     "build": "tsc -b && vite build",
+    "prebuild:web": "node scripts/sync-web-demos.cjs",
     "build:web": "vite build --config vite.config.web.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "preview:web": "vite preview --config vite.config.web.ts",
     "licenses": "license-checker --production --json --out src/assets/licenses.json",
+    "sync-web-demos": "node scripts/sync-web-demos.cjs",
     "deploy:web": "npm run build:web && firebase deploy --only hosting"
   },
   "dependencies": {

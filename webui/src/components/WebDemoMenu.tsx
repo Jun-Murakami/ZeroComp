@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import {
   Box,
+  Button,
   Drawer,
   IconButton,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemText,
   Typography,
   Divider,
   Tooltip,
@@ -14,6 +11,10 @@ import {
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
+
+// セクション定義は src/assets/web_demos.json を参照。
+// 親リポジトリ（JUCE/）に web_demos.json があれば prebuild の sync スクリプトで上書きされる。
+import menuSectionsJson from '../assets/web_demos.json';
 
 // ============================================================================
 // WebDemoMenu
@@ -30,38 +31,7 @@ interface MenuSection { readonly title: string; readonly links: ReadonlyArray<Me
 export const MENU_WIDE_QUERY    = '(min-width:1200px)';
 export const MENU_DRAWER_WIDTH  = 280;
 
-const MENU_SECTIONS: ReadonlyArray<MenuSection> = [
-  {
-    title: 'Demo Site',
-    links: [
-      { label: 'ZeroEQ',    href: 'https://zeroeq-demo.web.app/' },
-      { label: 'ZeroComp',  href: 'https://zerocomp-demo.web.app/' },
-      { label: 'ZeroLimit', href: 'https://zerolimit-demo.web.app/' },
-    ],
-  },
-  {
-    title: 'Download Plugin',
-    links: [
-      { label: 'ZeroEQ',    href: 'https://jun-murakami.web.app/#ZeroEq' },
-      { label: 'ZeroComp',  href: 'https://jun-murakami.web.app/#zeroComp' },
-      { label: 'ZeroLimit', href: 'https://jun-murakami.web.app/#zeroLimit' },
-    ],
-  },
-  {
-    title: 'Source Code',
-    links: [
-      { label: 'ZeroEQ',    href: 'https://github.com/Jun-Murakami/ZeroEQ' },
-      { label: 'ZeroComp',  href: 'https://github.com/Jun-Murakami/ZeroComp' },
-      { label: 'ZeroLimit', href: 'https://github.com/Jun-Murakami/ZeroLimit' },
-    ],
-  },
-  {
-    title: 'Other Plugins / Software',
-    links: [
-      { label: 'jun-murakami.web.app', href: 'https://jun-murakami.web.app' },
-    ],
-  },
-];
+const MENU_SECTIONS: ReadonlyArray<MenuSection> = menuSectionsJson;
 
 export const WebDemoMenu: React.FC = () => {
   const wide = useMediaQuery(MENU_WIDE_QUERY);
@@ -92,26 +62,33 @@ export const WebDemoMenu: React.FC = () => {
               px: 2,
               pt: 2,
               pb: 0.5,
-              color: 'text.secondary',
+              color: 'text.primary',
               fontWeight: 600,
               letterSpacing: 0.5,
-              textTransform: 'uppercase',
             }}
           >
             {section.title}
           </Typography>
-          <List dense disablePadding>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, px: 2, pb: 1 }}>
             {section.links.map((link) => (
-              <ListItem key={link.href} disablePadding>
-                <ListItemButton component='a' href={link.href}>
-                  <ListItemText
-                    primary={link.label}
-                    sx={{ '& .MuiListItemText-primary': { fontSize: '0.9rem' } }}
-                  />
-                </ListItemButton>
-              </ListItem>
+              <Button
+                key={link.href}
+                component='a'
+                href={link.href}
+                size='small'
+                variant='text'
+                sx={{
+                  textTransform: 'none',
+                  fontSize: '0.8rem',
+                  minWidth: 'auto',
+                  px: 1,
+                  py: 0.25,
+                }}
+              >
+                {link.label}
+              </Button>
             ))}
-          </List>
+          </Box>
           {sectionIdx < MENU_SECTIONS.length - 1 && <Divider sx={{ mt: 1 }} />}
         </Box>
       ))}

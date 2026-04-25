@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Input, Slider, Typography,useMediaQuery, useTheme } from '@mui/material';
+import { Box, Input, Slider, Typography } from '@mui/material';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
 import { useFineAdjustPointer } from '../hooks/useFineAdjustPointer';
 import { useNumberInputAdjust } from '../hooks/useNumberInputAdjust';
@@ -157,24 +157,26 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
     },
     onDragEnd: () => sliderState?.sliderDragEnded(),
   });
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   return (
     <Box
       sx={{
         display: 'grid',
         gridTemplateColumns: `${labelWidth}px 1fr ${inputWidth}px`,
+        // 2 行 grid: 1 行目 = slider レール行 (auto = 入力欄の高さに自動合わせ),
+        //  2 行目 = marker ラベル (12px)。
+        //  alignItems: center で 1 行目の中央 (= レール) にラベル/入力欄/slider thumb が揃う。
+        //  marker は 2 行目に明示配置して slider 列の真下に並べる。
+        gridTemplateRows: 'auto 12px',
         alignItems: 'center',
         columnGap: 0.5,
         width: '100%',
-        py: isMobile ? 0 : 0.5,
-        mt: isMobile ? -1 : 0,
       }}
     >
       <Typography
         variant='caption'
         sx={{
+          gridRow: 1,
           fontWeight: 500,
           fontSize: '0.72rem',
           color: 'text.primary',
@@ -184,22 +186,19 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
         {label}
       </Typography>
 
-      {/* スライダー + 自前マーカー。MUI の marks プロパティは環境依存でレール末端と
-          ラベル位置がズレることがあるため、ラベルはオーバーレイで自分で描画する。 */}
+      {/* スライダー本体。1 行目に置く。MUI の marks プロパティは環境依存でレール末端と
+          ラベル位置がズレることがあるため、ラベルは下の marker 行で自分で描画する。 */}
       <Box
         ref={wheelRef}
         onPointerDownCapture={handlePointerDownCapture}
         sx={{
+          gridRow: 1,
           position: 'relative',
           display: 'flex',
           alignItems: 'center',
           minWidth: 0,
           px: '6px', // thumb 半径 = 6px。レール端で thumb が親からはみ出ないように。
-          // 縦スペースをさらに節約: marker ラベルを thumb 下端と重ねる配置。
-          //  pb=2 なので marker(height:10, mt:-8) が thumb 領域に 4px 食い込む。
-          //  thumb が marker 位置に来た瞬間だけラベルが一時的に重なるが UX 許容範囲。
-          pt: isMobile ? '0px' : '10px',
-          pb: isMobile ? '0px' : '14px',
+          py: 0,
         }}
       >
         <Slider
@@ -227,6 +226,13 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
             width: '100%',
             padding: 0,
             height: 12,
+            // MUI Slider はタッチデバイス（pointer: coarse）で自動的に padding: 20px 0 を
+            //  足してくる（指タップ用の hit area 拡大）。これを無効化しないと slider container が
+            //  +40px され、結果としてマーカーが下にズレて間延びして見える。
+            //  代わりに padding は 0 のままにし、必要ならコンポーネント側で hit area を確保する。
+            '@media (pointer: coarse)': {
+              padding: 0,
+            },
             '& .MuiSlider-thumb': {
               width: 12,
               height: 12,
@@ -236,21 +242,28 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
             '& .MuiSlider-rail': { height: 3, opacity: 0.5 },
           }}
         />
+      </Box>
 
-        {/* マーカー（レールと完全に同じ座標系で描画）。
-            親コンテナの px: 6px ぶんが thumb 確保領域なので、その内側の 0..100% が rail の範囲。 */}
-        {marks && marks.length > 0 && (
+      {/* マーカー帯（grid 2 行目 / slider 列の真下）。
+          slider 列の x 範囲 (px:6 で left/right を 6px 内側へ) と一致するよう、
+          内側に left:6/right:6 の絶対配置 Box を被せて、その中にラベルを配置する。 */}
+      {marks && marks.length > 0 && (
+        <Box
+          sx={{
+            gridRow: 2,
+            gridColumn: 2,
+            position: 'relative',
+            height: '12px',
+            pointerEvents: 'none',
+          }}
+        >
           <Box
             sx={{
               position: 'absolute',
               left: '6px',
               right: '6px',
-              // marker の上端を slider box 下端より 8px 上に置く（= rail 中心より 2px 下）。
-              //  これで「レール下の数字ラベルがすぐ下に見える」密な見た目になる。
-              top: '100%',
-              mt: isMobile ? '-8px' : '-12px',
-              pointerEvents: 'none',
-              height: isMobile ? 8 : 12,
+              top: 0,
+              bottom: 0,
             }}
           >
             {marks.map((m) => {
@@ -263,9 +276,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
                     position: 'absolute',
                     left: `${pct}%`,
                     transform: 'translateX(-50%)',
-                    top: isMobile ? -8 : 4,
-                    margin: isMobile ? 0 : undefined,
-                    fontSize: isMobile ? '0.55rem' : '0.6rem',
+                    top: 0,
+                    fontSize: '0.6rem',
                     color: 'text.secondary',
                     lineHeight: 1,
                     userSelect: 'none',
@@ -277,10 +289,10 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
               );
             })}
           </Box>
-        )}
-      </Box>
+        </Box>
+      )}
 
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+      <Box sx={{ gridRow: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
         <Input
           className='block-host-shortcuts'
           inputRef={inputElRef}
