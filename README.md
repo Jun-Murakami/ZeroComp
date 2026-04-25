@@ -5,6 +5,8 @@ A **zero-latency** feedforward compressor for broadcast, streaming, and live pro
 You can find the demo site running on WebAssembly here.
 https://zerocomp-demo.web.app/
 
+<img width="1328" height="945" alt="sc_zerocomp" src="https://github.com/user-attachments/assets/62d4e2f6-3f82-4d6a-8dab-9d793afa72b3" />
+
 ## Highlights
 
 - **0-sample latency** — no lookahead, no oversampling. Instant attack with smoothed release envelope. Suitable for live/broadcast where monitoring delay is unacceptable.
