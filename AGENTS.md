@@ -37,6 +37,7 @@
 - Windows（本番配布）: `powershell -File build_windows.ps1 -Configuration Release` — WebUI ビルド → VST3 / AAX / Standalone コンパイル → AAX 署名（`.env` に PACE 情報あれば）→ ZIP 梱包 → Inno Setup インストーラ生成
 - Windows（開発）: `cmake -B build -G "Visual Studio 17 2022" -A x64 && cmake --build build --config Debug --target ZeroComp_VST3`
 - macOS: `./build_macos.zsh`
+- Linux（WSL2 Ubuntu 24.04 で動作確認）: `bash build_linux.sh` — VST3 / LV2 / CLAP / Standalone をビルドし `releases/<VERSION>/ZeroComp_<VERSION>_Linux_VST3_LV2_CLAP_Standalone.zip` を生成。LV2 / CLAP は `if(UNIX AND NOT APPLE)` で条件付き有効化されるので Win/Mac リリース経路には影響しない
 - WebUI dev: `cd webui && npm install && npm run dev`
 - 型チェックのみ: `cd webui && npx tsc --noEmit`
 

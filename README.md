@@ -1,6 +1,6 @@
 # ZeroComp
 
-A **zero-latency** feedforward compressor for broadcast, streaming, and live production, with four analog-flavored modes (VCA / Opto / FET / Vari-Mu). Built with JUCE + WebView (Vite / React 19 / MUI 7). Ships as VST3 / AU / AAX / Standalone, plus a WebAssembly browser demo that reuses the exact same DSP.
+A **zero-latency** feedforward compressor for broadcast, streaming, and live production, with four analog-flavored modes (VCA / Opto / FET / Vari-Mu). Built with JUCE + WebView (Vite / React 19 / MUI 7). Ships as **VST3 / AU / AAX / Standalone** on Windows / macOS and **VST3 / LV2 / CLAP / Standalone** on Linux, plus a WebAssembly browser demo that reuses the exact same DSP.
 
 You can find the demo site running on WebAssembly here.
 https://zerocomp-demo.web.app/
@@ -46,8 +46,10 @@ The plugin window is resizable (minimum 520 × 390, default 720 × 500).
 - C++17 toolchain
   - Windows: Visual Studio 2022 with the C++ workload
   - macOS: Xcode 14+
+  - Linux: gcc 13+ / clang + the apt packages listed under [Building on Linux](#building-on-linux)
 - Node.js 18+ and npm (for the WebUI)
 - JUCE (included as a submodule)
+- `clap-juce-extensions` (also a git submodule, used only for the Linux CLAP target)
 - Optional: AAX SDK for Pro Tools builds (drop at `aax-sdk/`)
 - Optional: Inno Setup 6 for the Windows installer
 - Optional: [Emscripten](https://emscripten.org) for the WebAssembly demo
@@ -70,7 +72,36 @@ powershell -ExecutionPolicy Bypass -File build_windows.ps1 -Configuration Releas
 
 # 4. Build (macOS)
 ./build_macos.zsh
+
+# 5. Build (Linux — see "Building on Linux" below)
+bash build_linux.sh
 ```
+
+### Building on Linux
+
+Tested on **WSL2 Ubuntu 24.04**, but should work on any modern glibc-based distro with `webkit2gtk-4.1` available.
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential pkg-config cmake ninja-build git \
+  libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev \
+  libfreetype-dev libfontconfig1-dev \
+  libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+  libxinerama-dev libxrandr-dev libxrender-dev \
+  libwebkit2gtk-4.1-dev libglu1-mesa-dev mesa-common-dev libgtk-3-dev
+
+git submodule update --init --recursive   # JUCE + clap-juce-extensions
+bash build_linux.sh                        # Release VST3 / LV2 / CLAP / Standalone + zip
+```
+
+Output:
+
+- Build artefacts: `build-linux/plugin/ZeroComp_artefacts/Release/{VST3,LV2,CLAP,Standalone}/`
+- Auto-installed: `~/.vst3/ZeroComp.vst3`, `~/.lv2/ZeroComp.lv2`, `~/.clap/ZeroComp.clap`
+- Distribution zip: `releases/<VERSION>/ZeroComp_<VERSION>_Linux_VST3_LV2_CLAP_Standalone.zip`
+
+LV2 and CLAP are gated behind `if(UNIX AND NOT APPLE)` in CMake, so existing Windows / macOS release flows are unaffected. AU and AAX are skipped on Linux as expected.
 
 ### Manual CMake build (for development)
 

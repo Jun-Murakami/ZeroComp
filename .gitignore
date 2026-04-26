@@ -1,4 +1,5 @@
 /build
+/build-*/
 
 # AAX SDK (proprietary - not redistributable)
 /AAX_SDK/

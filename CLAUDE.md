@@ -7,7 +7,7 @@
 ### 目的とスコープ
 
 - **目的**: ルックアヘッド無しでフィードフォワード検出するブロードキャスト用コンプレッサー。放送／配信／ライブの音声処理を最優先（ゼロレイテンシー）、副次的にマスタリング／ミックス用途にも対応。
-- **対象フォーマット**: VST3 / AU / AAX / Standalone
+- **対象フォーマット**: VST3 / AU / AAX / Standalone（Windows / macOS）+ VST3 / LV2 / CLAP / Standalone（Linux）
 - **機能要件**:
   - Threshold フェーダー（-80..0 dB、放送向けの広レンジ）
   - Ratio フェーダー（1:1..100:1、log skew、100:1 でブリックウォール相当）
@@ -123,6 +123,13 @@ lookahead も oversampling も**使わない**。
 - Windows 配布ビルド: `powershell -File build_windows.ps1 -Configuration Release`
   - 成果物: `releases/<VERSION>/ZeroComp_<VERSION>_Windows_VST3_AAX_Standalone.zip` と `ZeroComp_<VERSION>_Windows_Setup.exe`（Inno Setup 6 必須）
   - AAX 署名は `.env` に PACE 情報がある場合のみ自動実行
+- Linux 配布ビルド: `bash build_linux.sh`（WSL2 Ubuntu 24.04 で動作確認）
+  - 成果物: `releases/<VERSION>/ZeroComp_<VERSION>_Linux_VST3_LV2_CLAP_Standalone.zip`。VST3 / LV2 / CLAP / Standalone を同梱
+  - 自動インストール先: `~/.vst3/ZeroComp.vst3`, `~/.lv2/ZeroComp.lv2`, `~/.clap/ZeroComp.clap`（VST3 / LV2 は JUCE の `COPY_PLUGIN_AFTER_BUILD`、CLAP は `build_linux.sh` 側で明示コピー）
+  - LV2 / CLAP は **Linux ビルドでのみ** 有効化（`if(UNIX AND NOT APPLE)` で条件分岐）。Windows / macOS の既存リリース経路には影響させない
+  - LV2URI: `https://junmurakami.com/plugins/zerocomp`（`plugin/CMakeLists.txt` の `juce_add_plugin` 内）。LV2 規約上 stable な URI 必須なのでバージョンを跨いで変更しない
+  - CLAP: `clap-juce-extensions` を submodule として取り込み、`clap_juce_extensions_plugin(... CLAP_ID "com.junmurakami.zerocomp" CLAP_FEATURES audio-effect compressor)` を呼ぶ
+  - 必要 apt パッケージ: `build-essential pkg-config cmake ninja-build git libasound2-dev libjack-jackd2-dev libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libwebkit2gtk-4.1-dev libglu1-mesa-dev mesa-common-dev libgtk-3-dev`
 
 #### WASM ビルド（Web デモ用 DSP）
 

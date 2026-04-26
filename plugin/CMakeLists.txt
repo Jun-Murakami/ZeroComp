@@ -32,6 +32,12 @@ if(APPLE)
     set_property(GLOBAL PROPERTY JUCE_AAX_COPY_DIR "${CMAKE_BINARY_DIR}/AAX_Plugins")
 endif()
 
+# Linux ビルド時のみ LV2 を FORMATS に追加（既存の Windows/macOS リリース経路には影響させない）
+set(ZEROCOMP_FORMATS AU VST3 Standalone AAX)
+if(UNIX AND NOT APPLE)
+    list(APPEND ZEROCOMP_FORMATS LV2)
+endif()
+
 # プラグイン定義（JUCE v8）
 juce_add_plugin(ZeroComp
     VERSION ${PROJECT_VERSION}
@@ -40,7 +46,8 @@ juce_add_plugin(ZeroComp
     BUNDLE_ID "com.junmurakami.zerocomp"
     PLUGIN_MANUFACTURER_CODE Jmbc
     PLUGIN_CODE ZrCp
-    FORMATS AU VST3 Standalone AAX
+    FORMATS ${ZEROCOMP_FORMATS}
+    LV2URI "https://junmurakami.com/plugins/zerocomp"
     PLUGIN_AU_MAIN_TYPE "aufx"
     VST3_CATEGORIES "Fx" "Dynamics"
     AAX_CATEGORY "AAX_ePlugInCategory_Dynamics"
@@ -58,6 +65,13 @@ juce_add_plugin(ZeroComp
 )
 
 juce_generate_juce_header(ZeroComp)
+
+# Linux ビルド時のみ CLAP ターゲットを生成（clap-juce-extensions 経由）
+if(UNIX AND NOT APPLE)
+    clap_juce_extensions_plugin(TARGET ZeroComp
+        CLAP_ID "com.junmurakami.zerocomp"
+        CLAP_FEATURES audio-effect compressor)
+endif()
 
 # ソースファイル
 target_sources(ZeroComp PRIVATE

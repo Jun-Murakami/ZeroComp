@@ -28,6 +28,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # JUCEをサブモジュールから追加
 add_subdirectory(JUCE)
 
+# clap-juce-extensions（Linux ビルドでのみ CLAP ターゲットを生成）
+if(UNIX AND NOT APPLE)
+    add_subdirectory(clap-juce-extensions EXCLUDE_FROM_ALL)
+endif()
+
 # AAX SDK の設定（存在する場合のみ有効）
 set(AAX_SDK_PATH "${CMAKE_SOURCE_DIR}/aax-sdk" CACHE PATH "Path to AAX SDK")
 if(EXISTS "${AAX_SDK_PATH}/Interfaces/AAX.h")
