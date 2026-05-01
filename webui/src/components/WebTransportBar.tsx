@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 /**
  * Web デモ版のトランスポートバー。
  * プラグイン版では DAW がオーディオを供給するので不要だが、

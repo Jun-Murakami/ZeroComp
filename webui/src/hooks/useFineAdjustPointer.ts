@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 import React, { useCallback, useRef } from 'react';
 
 export interface FineAdjustPointerOptions {

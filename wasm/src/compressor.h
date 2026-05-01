@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 // WASM 版: ZeroComp のゼロレイテンシー・フィードフォワード・コンプレッサー。
 //  plugin/src/dsp/Compressor.{h,cpp} を JUCE 依存なしで純 C++ に移植したもの。
 //  挙動は完全に同一（Mode、ソフトニー、LDR メモリ含む）。

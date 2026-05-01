@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Input, Slider, Typography } from '@mui/material';
 import { darken, lighten, styled } from '@mui/material/styles';

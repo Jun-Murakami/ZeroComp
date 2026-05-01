@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 /**
  * juce-framework-frontend-mirror の SliderState / ToggleState / ComboBoxState の
  * Web 互換実装。JUCE WebView が無い環境でも同じインターフェースで動作する。

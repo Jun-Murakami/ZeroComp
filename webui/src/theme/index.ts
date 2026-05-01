@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 import { createTheme } from '@mui/material/styles';
 import '@fontsource/red-hat-mono/400.css';
 import '@fontsource/jost/400.css';

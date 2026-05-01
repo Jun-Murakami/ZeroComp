@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 import React, { useLayoutEffect, useRef } from 'react';
 import { Box, Typography } from '@mui/material';
 

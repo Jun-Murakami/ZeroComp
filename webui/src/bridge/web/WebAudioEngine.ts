@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 /**
  * Web Audio API + WASM AudioWorklet のマネージャ（ZeroComp Web デモ版）。
  *

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 // WASM デモ用 DSP オーケストレータ（ZeroComp 版）。
 //  - 1 本のオーディオソース（PCM L/R）
 //  - トランスポート（再生 / 停止 / シーク / ループ）

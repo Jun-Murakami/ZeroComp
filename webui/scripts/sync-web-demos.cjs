@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 // 親リポジトリに置かれた web_demos.json があれば src/assets/web_demos.json に上書きコピーする。
 // dev / build のたびに実行され、親 JSON が存在しない場合は既存ファイルを温存する。
 //

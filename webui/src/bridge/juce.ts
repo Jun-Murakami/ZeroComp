@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 // juce-framework-frontend-mirrorから必要な関数をインポート
 import {
   getNativeFunction,

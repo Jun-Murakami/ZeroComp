@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 /**
  * juce-framework-frontend-mirror の Web 互換 shim（ZeroComp 版）。
  * Vite エイリアスで本家モジュールの代わりにこれが解決される。

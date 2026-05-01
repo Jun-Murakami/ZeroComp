@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 // ITU-R BS.1770-4 準拠の Momentary LKFS（400ms 窓）。
 // プラグイン側 MomentaryProcessor を JUCE 非依存に移植。
 #pragma once

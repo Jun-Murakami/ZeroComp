@@ -276,7 +276,9 @@ ZeroComp/
 
 ## License
 
-Plugin source: see `LICENSE`. Third-party SDKs (JUCE / VST3 / AAX / WebView2 etc.) are licensed separately; see the *Licenses* dialog inside the plugin UI for the runtime dependency list.
+This project is licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later) — see the [LICENSE](LICENSE) file for the full text.
+
+It uses [JUCE](https://juce.com/) under the AGPLv3 option of its dual-licensing scheme. Other third-party SDKs (VST3 / AAX / WebView2 / etc.) are governed by their own licenses; the runtime dependency list is shown in the in-app *Licenses* dialog.
 
 ## Credits
 

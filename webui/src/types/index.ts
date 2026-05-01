@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Jun Murakami
 // ZeroComp: ゼロレイテンシー・リミッター用の型定義
 
 // メーターレベル（dBFS スケール）
