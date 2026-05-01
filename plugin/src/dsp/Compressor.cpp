@@ -132,11 +132,23 @@ namespace {
     }
 }
 
-float Compressor::processBlock(juce::AudioBuffer<float>& buffer, float* gainOut) noexcept
+float Compressor::processBlock(juce::AudioBuffer<float>& buffer,
+                               const juce::AudioBuffer<float>* detectionBuffer,
+                               float* gainOut) noexcept
 {
     const int numChannels = buffer.getNumChannels();
     const int numSamples  = buffer.getNumSamples();
     if (numChannels <= 0 || numSamples <= 0) return 1.0f;
+
+    // 検出ソース: サイドチェインが渡されていればそれを使う。サンプル数が一致しないものは安全側で無視。
+    const bool useExternalDetect =
+        detectionBuffer != nullptr
+        && detectionBuffer->getNumChannels() > 0
+        && detectionBuffer->getNumSamples() == numSamples;
+    const int detectChannels = useExternalDetect ? detectionBuffer->getNumChannels() : 0;
+    const float* detectL = useExternalDetect ? detectionBuffer->getReadPointer(0) : nullptr;
+    const float* detectR = useExternalDetect ? detectionBuffer->getReadPointer(detectChannels > 1 ? 1 : 0)
+                                             : nullptr;
 
     float minGain = 1.0f;
     if (! std::isfinite(envelopeDb)) envelopeDb = 0.0f;
@@ -164,13 +176,15 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer, float* gainOut)
     // per-sample gain 出力用のサンプルインデックス。lambda からキャプチャする。
     int sampleIdx = 0;
 
-    auto step = [&](float& sampleL, float& sampleR) noexcept
+    auto step = [&](float& sampleL, float& sampleR, float detL, float detR) noexcept
     {
         sampleL = sanitizeFinite(sampleL);
         sampleR = sanitizeFinite(sampleR);
+        detL    = sanitizeFinite(detL);
+        detR    = sanitizeFinite(detR);
 
-        // ピーク検出（ステレオリンク）
-        const float a = std::max(std::abs(sampleL), std::abs(sampleR));
+        // ピーク検出（ステレオリンク）。検出ソースは sidechain がある場合は detL/detR、無ければメイン信号。
+        const float a = std::max(std::abs(detL), std::abs(detR));
         const float x = a > kMinAbs ? a : kMinAbs;
         const float xDb = 20.0f * std::log10(x);
         const float targetDb = computeGainReductionDb(xDb, kneeForCurve);
@@ -231,7 +245,9 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer, float* gainOut)
             sampleIdx = i;
             float l = ch[i];
             float r = l;
-            step(l, r);
+            const float dL = detectL ? detectL[i] : l;
+            const float dR = detectR ? detectR[i] : r;
+            step(l, r, dL, dR);
             ch[i] = l;
         }
         return minGain;
@@ -245,7 +261,9 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer, float* gainOut)
         sampleIdx = i;
         float l = left[i];
         float r = right[i];
-        step(l, r);
+        const float dL = detectL ? detectL[i] : l;
+        const float dR = detectR ? detectR[i] : r;
+        step(l, r, dL, dR);
         left[i]  = l;
         right[i] = r;
 

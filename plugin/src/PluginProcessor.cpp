@@ -69,8 +69,9 @@ namespace {
 
 ZeroCompAudioProcessor::ZeroCompAudioProcessor()
     : AudioProcessor(BusesProperties()
-                         .withInput ("Input",  juce::AudioChannelSet::stereo(), true)
-                         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+                         .withInput ("Input",     juce::AudioChannelSet::stereo(), true)
+                         .withInput ("Sidechain", juce::AudioChannelSet::stereo(), false)
+                         .withOutput("Output",    juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, juce::Identifier("ZeroComp"), createParameterLayout())
 {
 }
@@ -260,19 +261,43 @@ bool ZeroCompAudioProcessor::isBusesLayoutSupported(const juce::AudioProcessor::
     const auto& mainOut = layouts.getMainOutputChannelSet();
     if (mainIn.isDisabled() || mainOut.isDisabled()) return false;
     if (mainIn != mainOut) return false;
-    return mainOut == juce::AudioChannelSet::mono()
-        || mainOut == juce::AudioChannelSet::stereo();
+    if (mainOut != juce::AudioChannelSet::mono()
+        && mainOut != juce::AudioChannelSet::stereo())
+        return false;
+
+    // サイドチェイン入力（バス 1）はホスト側で ON/OFF。disabled / mono / stereo を許可。
+    //  AAX は伝統的に mono key input、VST3/AU/CLAP は stereo もよく使う。
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto& sc = layouts.inputBuses.getReference(1);
+        if (! sc.isDisabled()
+            && sc != juce::AudioChannelSet::mono()
+            && sc != juce::AudioChannelSet::stereo())
+            return false;
+    }
+
+    return true;
 }
 
 void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midi*/)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    const int numChannels = buffer.getNumChannels();
-    const int numSamples  = buffer.getNumSamples();
+    // メインバス（in/out 共有メモリ）とサイドチェインバスを分離。
+    //  getBusBuffer は非所有 AudioBuffer を RVO で返すので alloc は発生しない。
+    auto mainBuffer = getBusBuffer(buffer, false, 0);
+    auto scBuffer   = getBusBuffer(buffer, true,  1);
+
+    const int numChannels = mainBuffer.getNumChannels();
+    const int numSamples  = mainBuffer.getNumSamples();
     if (numSamples <= 0 || numChannels <= 0) return;
 
-    sanitizeBufferFinite(buffer, numChannels, numSamples);
+    // SC バスはホストが有効化したときだけ非ゼロチャネル。
+    const bool scActive = scBuffer.getNumChannels() > 0;
+
+    sanitizeBufferFinite(mainBuffer, numChannels, numSamples);
+    if (scActive)
+        sanitizeBufferFinite(scBuffer, scBuffer.getNumChannels(), numSamples);
 
     // --- パラメータ取得 ---
     const float thresholdDb = clampFinite(parameters.getRawParameterValue(zc::id::THRESHOLD.getParamID())->load(),   -80.0f, 0.0f,    0.0f);
@@ -306,8 +331,8 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         inputPeakPerSample.resize(static_cast<size_t>(numSamples), 0.0f);
 
     {
-        auto* l = buffer.getReadPointer(0);
-        auto* r = buffer.getReadPointer(std::min(1, numChannels - 1));
+        auto* l = mainBuffer.getReadPointer(0);
+        auto* r = mainBuffer.getReadPointer(std::min(1, numChannels - 1));
         float peakL = 0.0f, peakR = 0.0f, sqL = 0.0f, sqR = 0.0f;
         for (int i = 0; i < numSamples; ++i)
         {
@@ -325,13 +350,16 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         atomicMaxFloat(inRmsAccumL, std::sqrt(sqL * invN));
         atomicMaxFloat(inRmsAccumR, std::sqrt(sqR * invN));
     }
-    inputMomentary.processBlock(buffer);
+    inputMomentary.processBlock(mainBuffer);
 
     // --- コンプ本体 ---
     //  per-sample gain を scratch に取得して後段の波形 slice 集計に使う。
     //  （block-level の minGain を slice に流すと解像度が DAW のブロックサイズに依存してしまう）
+    //  サイドチェインが有効ならそれを検出ソースに、無ければメイン信号を検出ソースに使う。
     float* gainPerSample = waveformGainScratch.data();
-    const float minGain = compressor.processBlock(buffer, gainPerSample);
+    const float minGain = compressor.processBlock(mainBuffer,
+                                                  scActive ? &scBuffer : nullptr,
+                                                  gainPerSample);
     atomicMinFloat(minGainAccum, minGain);
 
     // 波形表示: 入力ピーク + per-sample gain を slice に流す。
@@ -351,13 +379,13 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     if (std::abs(outGainLin - 1.0f) > 1.0e-6f)
     {
         for (int ch = 0; ch < numChannels; ++ch)
-            buffer.applyGain(ch, 0, numSamples, outGainLin);
+            mainBuffer.applyGain(ch, 0, numSamples, outGainLin);
     }
 
     // --- 出力メータ（Peak + RMS）---
     {
-        auto* l = buffer.getReadPointer(0);
-        auto* r = buffer.getReadPointer(std::min(1, numChannels - 1));
+        auto* l = mainBuffer.getReadPointer(0);
+        auto* r = mainBuffer.getReadPointer(std::min(1, numChannels - 1));
         float peakL = 0.0f, peakR = 0.0f, sqL = 0.0f, sqR = 0.0f;
         for (int i = 0; i < numSamples; ++i)
         {
@@ -374,7 +402,7 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         atomicMaxFloat(outRmsAccumL, std::sqrt(sqL * invN));
         atomicMaxFloat(outRmsAccumR, std::sqrt(sqR * invN));
     }
-    outputMomentary.processBlock(buffer);
+    outputMomentary.processBlock(mainBuffer);
 }
 
 bool ZeroCompAudioProcessor::hasEditor() const { return true; }
