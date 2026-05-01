@@ -34,6 +34,7 @@ export const MENU_WIDE_QUERY    = '(min-width:1200px)';
 export const MENU_DRAWER_WIDTH  = 280;
 
 const MENU_SECTIONS: ReadonlyArray<MenuSection> = menuSectionsJson;
+const SOURCE_URL = 'https://github.com/Jun-Murakami/ZeroComp';
 
 export const WebDemoMenu: React.FC = () => {
   const wide = useMediaQuery(MENU_WIDE_QUERY);
@@ -94,6 +95,26 @@ export const WebDemoMenu: React.FC = () => {
           {sectionIdx < MENU_SECTIONS.length - 1 && <Divider sx={{ mt: 1 }} />}
         </Box>
       ))}
+
+      <Box sx={{ marginTop: 'auto', px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
+        <Typography
+          variant='caption'
+          sx={{ display: 'block', color: 'text.secondary', mb: 0.5, fontSize: '0.7rem', fontWeight: 600, letterSpacing: 0.5 }}
+        >
+          Open Source
+        </Typography>
+        <Button
+          component='a'
+          href={SOURCE_URL}
+          target='_blank'
+          rel='noopener noreferrer'
+          size='small'
+          variant='text'
+          sx={{ textTransform: 'none', fontSize: '0.78rem', minWidth: 'auto', px: 1, py: 0.25 }}
+        >
+          Source on GitHub (AGPLv3)
+        </Button>
+      </Box>
     </Box>
   );
 

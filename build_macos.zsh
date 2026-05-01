@@ -753,6 +753,11 @@ else
 fi
 ZIP_PATH="${OUTPUT_DIR}/../${ZIP_NAME}"
 
+# LICENSE を ZIP にも同梱（PKG resources 同梱とは別経路で、トップレベル zip 内からアクセスできるように）
+if [[ -f "${ROOT_DIR}/LICENSE" && ! -f "${OUTPUT_DIR}/LICENSE.txt" ]]; then
+    cp "${ROOT_DIR}/LICENSE" "${OUTPUT_DIR}/LICENSE.txt"
+fi
+
 echo_step "Creating ZIP..."
 (
     cd "${OUTPUT_DIR}"
@@ -763,13 +768,13 @@ echo_step "Creating ZIP..."
             "$(basename "${DEST_AU}")" \
             "$(basename "${DEST_APP}")" \
             "$(basename "${DEST_AAX}")" \
-            ReadMe.txt version.json >/dev/null
+            LICENSE.txt ReadMe.txt version.json >/dev/null
     else
         /usr/bin/zip -r -y "${ZIP_PATH}" \
             "$(basename "${DEST_VST3}")" \
             "$(basename "${DEST_AU}")" \
             "$(basename "${DEST_APP}")" \
-            ReadMe.txt version.json >/dev/null
+            LICENSE.txt ReadMe.txt version.json >/dev/null
     fi
 )
 echo_success "ZIP creation completed: ${ZIP_PATH}"

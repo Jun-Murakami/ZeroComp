@@ -86,6 +86,11 @@ if [[ "$CONFIG" == "Release" ]]; then
     done
 
     if (( ${#INCLUDES[@]} > 0 )); then
+        # LICENSE を ARTEFACTS にコピーして zip に同梱（AGPL 配布物としてバイナリと一緒に届ける）
+        if [[ -f "$SCRIPT_DIR/LICENSE" ]]; then
+            cp -f "$SCRIPT_DIR/LICENSE" "$ARTEFACTS/LICENSE.txt"
+            INCLUDES+=("LICENSE.txt")
+        fi
         # cmake -E tar はクロスプラットフォームで zip を作れる（zip パッケージ非依存）
         ZIP_PATH_ABS="$(realpath -m "$ZIP_PATH")"
         ( cd "$ARTEFACTS" && cmake -E tar cf "$ZIP_PATH_ABS" --format=zip "${INCLUDES[@]}" >/dev/null )

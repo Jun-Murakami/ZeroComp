@@ -537,6 +537,11 @@ if (Test-Path $ZipPath) {
     Remove-Item $ZipPath -Force
 }
 
+# Bundle LICENSE in the distribution ZIP (AGPL-3.0-or-later requires the license to ship with the binary)
+if (Test-Path "$RootDir\LICENSE") {
+    Copy-Item -Path "$RootDir\LICENSE" -Destination "$OutputDir\Windows\LICENSE.txt" -Force
+}
+
 # Create ZIP using Compress-Archive
 Compress-Archive -Path "$OutputDir\Windows\*" -DestinationPath $ZipPath -CompressionLevel Optimal
 Write-Success "ZIP archive created"

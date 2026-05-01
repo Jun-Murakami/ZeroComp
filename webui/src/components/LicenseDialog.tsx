@@ -110,6 +110,27 @@ export const LicenseDialog: React.FC<LicenseDialogProps> = ({ open, onClose }) =
           <Typography variant='body2' color='text.secondary' sx={{ fontSize: '0.78rem' }}>
             Made with JUCE
           </Typography>
+          <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mt: 0.75, fontSize: '0.70rem' }}>
+            Licensed under{' '}
+            <MuiLink
+              href='https://www.gnu.org/licenses/agpl-3.0.html'
+              onClick={(e) => handleLinkClick(e, 'https://www.gnu.org/licenses/agpl-3.0.html')}
+              sx={{ cursor: 'pointer' }}
+            >
+              GNU AGPLv3 or later
+            </MuiLink>
+            {' — '}
+            <MuiLink
+              href='https://github.com/Jun-Murakami/ZeroComp'
+              onClick={(e) => handleLinkClick(e, 'https://github.com/Jun-Murakami/ZeroComp')}
+              sx={{ cursor: 'pointer' }}
+            >
+              Source on GitHub
+            </MuiLink>
+          </Typography>
+          <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mt: 0.5, fontSize: '0.66rem', lineHeight: 1.35, fontStyle: 'italic', maxWidth: 480, mx: 'auto' }}>
+            This program is distributed WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+          </Typography>
         </Box>
 
         <Divider sx={{ my: 0.5 }} />
