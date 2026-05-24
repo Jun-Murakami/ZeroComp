@@ -2,7 +2,8 @@
 # PowerShell script for building production release with embedded WebUI
 
 param(
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [switch]$SkipCodeSign
 )
 
 # Read version from VERSION file
@@ -66,6 +67,65 @@ if (Test-Path $EnvFilePath) {
                 }
             }
         }
+    }
+}
+
+# ----------------------------------------------------------------------------
+# Windows Authenticode code signing (Azure Key Vault via azuresigntool)
+# ----------------------------------------------------------------------------
+# Signs distributable PE files (VST3 DLL / Standalone exe / Inno Setup installer)
+# with the Azure Key Vault certificate. Auth uses -kvm (DefaultAzureCredential):
+# AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_CLIENT_SECRET (User env or .env), or
+# an az login session. No secrets are stored here. AAX is signed by PACE wraptool
+# (Step 3) since it cannot be re-signed afterwards without breaking the wrap.
+$AzureKeyVaultUrl = if ($env:AZURE_KEYVAULT_URL) { $env:AZURE_KEYVAULT_URL } else { 'https://jun-codesign-kv.vault.azure.net/' }
+$AzureCertName    = if ($env:AZURE_CERT_NAME)    { $env:AZURE_CERT_NAME }    else { 'jun-codesigning-2026' }
+$TimestampUrl     = if ($env:CODESIGN_TIMESTAMP_URL) { $env:CODESIGN_TIMESTAMP_URL } else { 'http://timestamp.digicert.com' }
+$CodeSigningStatus = "unsigned"
+
+function Invoke-AuthenticodeSign {
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+
+    if ($SkipCodeSign) {
+        Write-Host "Code signing skipped (-SkipCodeSign)" -ForegroundColor Yellow
+        $script:CodeSigningStatus = "skipped"
+        return $false
+    }
+
+    $existing = @($Paths | Where-Object { $_ -and (Test-Path $_) })
+    if ($existing.Count -eq 0) {
+        Write-Host "Code signing: no target files found" -ForegroundColor Yellow
+        return $false
+    }
+
+    if (-not (Get-Command azuresigntool -ErrorAction SilentlyContinue)) {
+        Write-Host "Warning: azuresigntool not found on PATH - skipping code signing" -ForegroundColor Yellow
+        Write-Host "  Install with: dotnet tool install --global AzureSignTool" -ForegroundColor Gray
+        $script:CodeSigningStatus = "tool_missing"
+        return $false
+    }
+
+    foreach ($f in $existing) { Write-Step "Signing: $f" }
+
+    $signArgs = @(
+        "sign",
+        "-kvu", $AzureKeyVaultUrl,
+        "-kvc", $AzureCertName,
+        "-kvm",
+        "-tr", $TimestampUrl,
+        "-td", "sha256",
+        "-fd", "sha256"
+    ) + $existing
+
+    & azuresigntool @signArgs
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Code signing succeeded ($($existing.Count) file(s))"
+        $script:CodeSigningStatus = "signed"
+        return $true
+    } else {
+        Write-Host "Warning: code signing failed (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        $script:CodeSigningStatus = "signing_failed"
+        return $false
     }
 }
 
@@ -305,115 +365,101 @@ if ($BuildAAX) {
         # Sign AAX plugin
         Write-Step "Signing AAX plugin with PACE Eden tools..."
         $WrapToolPath = "C:\Program Files (x86)\PACEAntiPiracy\Eden\Fusion\Versions\5\wraptool.exe"
-        
-        if (Test-Path $WrapToolPath) {
-            # Check for PFX certificate in multiple locations
-            $PfxCandidates = @(
-                $env:PACE_PFX_PATH,                    # Environment variable path
-                "$RootDir\zerocomp-dev.pfx",         # Project root
-                "$env:USERPROFILE\.zerocomp\dev.pfx", # User home directory
-                ".\certificates\zerocomp-dev.pfx"    # Certificates folder
-            )
-            
-            $PfxPath = $null
-            foreach ($candidate in $PfxCandidates) {
-                if ($candidate -and (Test-Path $candidate)) {
-                    $PfxPath = $candidate
-                    Write-Host "  PFX certificate found at: $PfxPath" -ForegroundColor Green
-                    break
-                }
-            }
-            
-            if (-not $PfxPath) {
-                Write-Host "Warning: PFX certificate file not found in any of the following locations:" -ForegroundColor Yellow
-                foreach ($candidate in $PfxCandidates) {
-                    if ($candidate) {
-                        Write-Host "  - $candidate" -ForegroundColor Gray
-                    }
-                }
-                Write-Host "AAX plugin will remain unsigned." -ForegroundColor Yellow
-                Write-Host "To enable signing, set PACE_PFX_PATH environment variable or place certificate in project root." -ForegroundColor Yellow
-                $AAXSigningStatus = "certificate_missing"
-            } else {
-                
-                # Check if PACE signing credentials are available
-                $SkipAAXSigning = $false
-                $RequiredEnvVars = @("PACE_USERNAME", "PACE_PASSWORD", "PACE_ORGANIZATION", "PACE_KEYPASSWORD")
-                $MissingVars = @()
-                
-                foreach ($var in $RequiredEnvVars) {
-                    if (-not (Get-Item "env:$var" -ErrorAction SilentlyContinue)) {
-                        $MissingVars += $var
-                    }
-                }
-                
-                if ($MissingVars.Count -gt 0) {
-                    Write-Warning "The following environment variables are not set: $($MissingVars -join ', ')"
-                    Write-Host "Skipping AAX signing. Unsigned plugin will be generated." -ForegroundColor Yellow
-                    $SkipAAXSigning = $true
-                    $AAXSigningStatus = "credentials_missing"
-                } else {
-                    Write-Host "PACE signing information detected. Executing AAX signing." -ForegroundColor Green
-                }
-                
-                if (-not $SkipAAXSigning) {
-                    # Sign in place (input and output must be the same for wraptool)
-                    # Run signing command with better error capture (signing in place)
-                    $SigningArgs = @(
-                        "sign",
-                        "--verbose",
-                        "--account", $env:PACE_USERNAME,
-                        "--password", $env:PACE_PASSWORD,
-                        "--wcguid", $env:PACE_ORGANIZATION,
-                        "--keyfile", $PfxPath,
-                        "--keypassword", $env:PACE_KEYPASSWORD,
-                        "--in", $DestAAX,
-                        "--out", $DestAAX  # Output must be same as input for AAX signing
-                        # Note: Do not autoinstall to system from wraptool to avoid duplicate installs
-                    )
-                    
-                    Write-Host "  Running PACE wraptool with arguments:" -ForegroundColor Gray
-                    Write-Host "    $($SigningArgs -join ' ')" -ForegroundColor Gray
-                    
-                    # Capture output for better error reporting
-                    $SigningOutput = & $WrapToolPath $SigningArgs 2>&1
-                    $SigningExitCode = $LASTEXITCODE
-                    
-                    # Display signing output
-                    $SigningOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-                    
-                    if ($SigningExitCode -eq 0) {
-                        Write-Success "AAX plugin signed successfully (in place)"
-                        $AAXSignedSuccessfully = $true
-                        $AAXSigningStatus = "signed"
-                    } else {
-                        Write-Host "Warning: AAX signing failed with exit code: $SigningExitCode" -ForegroundColor Yellow
-                        Write-Host "Common error codes:" -ForegroundColor Yellow
-                        Write-Host "  1 = Invalid arguments or syntax error" -ForegroundColor Yellow
-                        Write-Host "  2 = File not found or access denied" -ForegroundColor Yellow
-                        Write-Host "  3 = Certificate error (invalid PFX or password)" -ForegroundColor Yellow
-                        Write-Host "  4 = Network/server authentication error" -ForegroundColor Yellow
-                        Write-Host "  5 = Wrap configuration error" -ForegroundColor Yellow
-                        Write-Host "Keeping unsigned version." -ForegroundColor Yellow
-                        $AAXSigningStatus = "signing_failed"
-                    }
-                } else {
-                    Write-Host "AAX signing skipped. Unsigned plugin will be generated." -ForegroundColor Yellow
-                    if ($AAXSigningStatus -eq "unsigned_developer") {
-                        $AAXSigningStatus = "signing_skipped"
-                    }
-                }
-            }
-        } else {
+
+        if (-not (Test-Path $WrapToolPath)) {
             Write-Host "Warning: PACE Eden wraptool not found. AAX plugin will remain unsigned." -ForegroundColor Yellow
             Write-Host "Expected path: $WrapToolPath" -ForegroundColor Yellow
             $AAXSigningStatus = "wraptool_missing"
+        } else {
+            $PaceVars = @("PACE_USERNAME", "PACE_PASSWORD", "PACE_ORGANIZATION")
+            $MissingVars = @($PaceVars | Where-Object { -not (Get-Item "env:$_" -ErrorAction SilentlyContinue) })
+            if ($MissingVars.Count -gt 0) {
+                Write-Warning "Missing PACE env vars: $($MissingVars -join ', ')"
+                $AAXSigningStatus = "credentials_missing"
+            } else {
+                # --signtool path requires PACE_FUSION_HOME (= wraptool.exe directory).
+                $env:PACE_FUSION_HOME = Split-Path $WrapToolPath -Parent
+
+                # Authenticode-sign with the Azure KV certificate via azuresigntool.
+                # Code-signing keys are non-exportable (CA/B 2023-06), so there is no
+                # .pfx and wraptool's --keyfile cannot be used. Instead --signtool
+                # points at aax-signtool.bat which runs azuresigntool as the final
+                # step of the wrap flow (re-signing after wrap would HashMismatch).
+                $AaxWrapper = "$RootDir\aax-signtool.bat"
+                $HaveAst = [bool](Get-Command azuresigntool -ErrorAction SilentlyContinue)
+                $SigningArgs = $null
+                $SignMethod = ""
+                if (-not $SkipCodeSign -and $HaveAst -and (Test-Path $AaxWrapper)) {
+                    $env:CODESIGN_KVU = $AzureKeyVaultUrl
+                    $env:CODESIGN_KVC = $AzureCertName
+                    $env:CODESIGN_TR  = $TimestampUrl
+                    $env:CODESIGN_AZURESIGNTOOL = (Get-Command azuresigntool).Source
+                    $SigningArgs = @(
+                        "sign", "--verbose", "--installedbinaries",
+                        "--signtool", $AaxWrapper, "--signid", "1",
+                        "--account",  $env:PACE_USERNAME,
+                        "--password", $env:PACE_PASSWORD,
+                        "--wcguid",   $env:PACE_ORGANIZATION,
+                        "--in",  $DestAAX,
+                        "--out", $DestAAX
+                    )
+                    $SignMethod = "Azure Key Vault ($AzureCertName)"
+                } else {
+                    # Fallback: dev pfx (Pro Tools works, Authenticode root NOT trusted).
+                    # Used with -SkipCodeSign or when azuresigntool / wrapper is absent.
+                    $DevPfxName = ([IO.Path]::GetFileNameWithoutExtension($DestVST3)).ToLower() + "-dev.pfx"
+                    $PfxCandidates = @($env:PACE_PFX_PATH, "$RootDir\$DevPfxName")
+                    $PfxPath = $null
+                    foreach ($candidate in $PfxCandidates) { if ($candidate -and (Test-Path $candidate)) { $PfxPath = $candidate; break } }
+                    if (-not $PfxPath -or -not (Get-Item "env:PACE_KEYPASSWORD" -ErrorAction SilentlyContinue)) {
+                        Write-Host "Warning: Azure signing unavailable and no usable dev pfx/PACE_KEYPASSWORD - AAX left unsigned" -ForegroundColor Yellow
+                        $AAXSigningStatus = "certificate_missing"
+                    } else {
+                        $SigningArgs = @(
+                            "sign", "--verbose",
+                            "--account",  $env:PACE_USERNAME,
+                            "--password", $env:PACE_PASSWORD,
+                            "--wcguid",   $env:PACE_ORGANIZATION,
+                            "--keyfile",  $PfxPath,
+                            "--keypassword", $env:PACE_KEYPASSWORD,
+                            "--in",  $DestAAX,
+                            "--out", $DestAAX
+                        )
+                        $SignMethod = "dev pfx ($([IO.Path]::GetFileName($PfxPath)))"
+                    }
+                }
+
+                if ($SigningArgs) {
+                    Write-Host "  AAX signing method: $SignMethod" -ForegroundColor Gray
+                    $SigningOutput = & $WrapToolPath $SigningArgs 2>&1
+                    $SigningExitCode = $LASTEXITCODE
+                    $SigningOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+                    if ($SigningExitCode -eq 0) {
+                        Write-Success "AAX plugin signed successfully ($SignMethod)"
+                        $AAXSignedSuccessfully = $true
+                        $AAXSigningStatus = if ($SignMethod -like 'Azure*') { "signed_kv" } else { "signed_devcert" }
+                    } else {
+                        Write-Host "Warning: AAX signing failed with exit code: $SigningExitCode" -ForegroundColor Yellow
+                        $AAXSigningStatus = "signing_failed"
+                    }
+                }
+            }
         }
     } else {
         Write-Error "AAX build output not found at: $SourceAAX"
         exit 1
     }
 }
+
+# ----------------------------------------------------------------------------
+# Step 3.5: Authenticode signing (VST3 DLL + Standalone exe)
+# ----------------------------------------------------------------------------
+# Sign before ZIP/installer so distributables embed signed binaries. AAX is
+# handled by PACE wraptool in Step 3 (not signed here - re-signing a wrapped
+# binary externally would HashMismatch).
+Write-Header "Step 3.5: Signing Windows binaries (Authenticode)"
+$Vst3InnerPE = Join-Path $DestVST3 ("Contents\x86_64-win\" + [IO.Path]::GetFileNameWithoutExtension($DestVST3) + ".vst3")
+Invoke-AuthenticodeSign -Paths @($Vst3InnerPE, $DestStandalone) | Out-Null
 
 # Create README
 Write-Step "Creating documentation..."
@@ -481,6 +527,7 @@ $VersionInfo = @{
     webui = "embedded"
     build_type = $Configuration
     aax_signing = if ($BuildAAX) { $AAXSigningStatus } else { "N/A" }
+    code_signing = $CodeSigningStatus
 } | ConvertTo-Json
 
 $VersionInfo | Out-File -FilePath "$OutputDir\Windows\version.json" -Encoding UTF8
@@ -507,6 +554,7 @@ if (Test-Path $InnoSetupPath) {
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Installer created successfully"
             $InstallerPath = "$OutputDir\ZeroComp_${Version}_Windows_Setup.exe"
+            Invoke-AuthenticodeSign -Paths @($InstallerPath) | Out-Null
             if (Test-Path $InstallerPath) {
                 $InstallerInfo = Get-Item $InstallerPath
                 $InstallerSizeMB = [math]::Round($InstallerInfo.Length / 1MB, 2)
@@ -555,6 +603,12 @@ Write-Header "Build completed successfully!"
 
 Write-Host "Package: $ZipPath" -ForegroundColor White
 Write-Host "Size: $SizeMB MB" -ForegroundColor White
+Write-Host ""
+if ($CodeSigningStatus -eq "signed") {
+    Write-Host "[OK] VST3 / Standalone / Installer signed via Azure Key Vault" -ForegroundColor Green
+} else {
+    Write-Host "[!] Authenticode signing status: $CodeSigningStatus" -ForegroundColor Yellow
+}
 Write-Host ""
 if ($BuildAAX) {
     $AAXSigningStatusSummary = switch ($AAXSigningStatus) {

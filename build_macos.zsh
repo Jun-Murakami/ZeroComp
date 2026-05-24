@@ -318,6 +318,42 @@ fi
 echo_success "Artifacts copied successfully"
 
 #============================================
+# Step 2.5: 各フォーマットの CFBundleIdentifier を一意化
+#   JUCE は BUNDLE_ID を VST3/AU/Standalone/AAX すべてに同一適用するため、
+#   pkg 内のバンドル ID が衝突し、macOS インストーラで「コンポーネントを 1 つ
+#   しかオフにできない／2 つ目を外すと別が復活する」不具合が起きる。
+#   コード署名は Info.plist をシールするので、必ず署名前に書き換える。
+#============================================
+echo_header "Step 2.5: Making CFBundleIdentifier unique per format"
+
+set_unique_bundle_id() {
+    local bundle_path="$1"
+    local suffix="$2"
+    local plist="${bundle_path}/Contents/Info.plist"
+    if [[ ! -f "${plist}" ]]; then
+        echo_error "Info.plist not found: ${plist}"
+        exit 1
+    fi
+    local base
+    base="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "${plist}")"
+    # 再実行時に二重付与しない（DEST は毎回作り直されるので通常は素の ID）
+    if [[ "${base}" == *."${suffix}" ]]; then
+        echo "  $(basename "${bundle_path}"): ${base} (already unique)"
+        return
+    fi
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${base}.${suffix}" "${plist}"
+    echo "  $(basename "${bundle_path}"): ${base} -> ${base}.${suffix}"
+}
+
+set_unique_bundle_id "${DEST_VST3}" "vst3"
+set_unique_bundle_id "${DEST_AU}"   "au"
+set_unique_bundle_id "${DEST_APP}"  "app"
+if [[ ${BUILD_AAX} -eq 1 ]]; then
+    set_unique_bundle_id "${DEST_AAX}" "aax"
+fi
+echo_success "CFBundleIdentifier uniquification completed"
+
+#============================================
 # Step 3: コード署名（Hardened Runtime）
 #============================================
 echo_header "Step 3: Code Signing"

@@ -285,8 +285,40 @@ function App() {
   const grBarW = barW * 2;
 
   const dragState = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+  // リサイズはバックプレッシャ方式で送る。host への resize は往復処理（callNative の Promise は
+  //  VST3 の onSize 完了で解決）で、完了を待たず高頻度に送ると要求が積み上がってウィンドウが
+  //  カーソルからどんどん遅れていく。「往復中は次を送らず、完了時に最新の保留サイズだけを送る」
+  //  ことで host が捌ける最大レートで常に最新サイズだけを届け、蓄積遅延を無くす。
+  const pendingResize  = useRef<{ w: number; h: number } | null>(null);
+  const lastSentSize   = useRef<{ w: number; h: number } | null>(null);
+  const resizeInFlight = useRef(false);
+
+  const pumpResize = () => {
+    if (resizeInFlight.current) return;
+    const s = pendingResize.current;
+    if (!s) return;
+    const last = lastSentSize.current;
+    if (last && last.w === s.w && last.h === s.h) { pendingResize.current = null; return; }
+    pendingResize.current = null;
+    lastSentSize.current = s;
+    resizeInFlight.current = true;
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resizeInFlight.current = false;
+      pumpResize();
+    };
+    const safety = window.setTimeout(done, 200); // 完了応答が来なくてもフリーズしない安全策
+    void juceBridge.callNative('window_action', 'resizeTo', s.w, s.h).then(() => {
+      window.clearTimeout(safety);
+      done();
+    });
+  };
+
   const onDragStart: React.PointerEventHandler<HTMLDivElement> = (e) => {
     dragState.current = { startX: e.clientX, startY: e.clientY, startW: window.innerWidth, startH: window.innerHeight };
+    lastSentSize.current = { w: window.innerWidth, h: window.innerHeight };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onDrag: React.PointerEventHandler<HTMLDivElement> = (e) => {
@@ -294,17 +326,16 @@ function App() {
     const dx = e.clientX - dragState.current.startX;
     const dy = e.clientY - dragState.current.startY;
     // 最小サイズはネイティブ側 (PluginEditor.h kMinWidth/kMinHeight) と同期させる。
-    const w = Math.max(485, dragState.current.startW + dx);
-    const h = Math.max(320, dragState.current.startH + dy);
-    if (!window.__resizeRAF) {
-      window.__resizeRAF = requestAnimationFrame(() => {
-        window.__resizeRAF = 0;
-        juceBridge.callNative('window_action', 'resizeTo', w, h);
-      });
-    }
+    const w = Math.round(Math.max(485, dragState.current.startW + dx));
+    const h = Math.round(Math.max(320, dragState.current.startH + dy));
+    pendingResize.current = { w, h };
+    pumpResize();
   };
-  const onDragEnd: React.PointerEventHandler<HTMLDivElement> = () => {
+  const onDragEnd: React.PointerEventHandler<HTMLDivElement> = (e) => {
     dragState.current = null;
+    pumpResize();
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId))
+      e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
   return (
@@ -1011,7 +1042,6 @@ function App() {
               zIndex: 2147483647,
               backgroundColor: 'transparent',
             }}
-            title='Resize'
           />}
         </Box>
 
