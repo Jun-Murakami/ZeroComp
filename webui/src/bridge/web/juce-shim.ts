@@ -48,6 +48,8 @@ function registerDefaults(): void
 
   // --- Toggle ---
   toggleStates.set('AUTO_MAKEUP', new WebToggleState(false));
+  // SIDECHAIN は Web デモでは外部入力が無いので状態を保持するだけ（DSP 送信なし）。
+  toggleStates.set('SIDECHAIN', new WebToggleState(false));
 
   // --- Choice ---
   comboBoxStates.set('MODE',          new WebComboBoxState(0, 4)); // VCA / Opto / FET / Vari-Mu

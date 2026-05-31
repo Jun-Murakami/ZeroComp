@@ -17,6 +17,12 @@
 
 set -euo pipefail
 
+# LV2 マニフェスト生成時、JUCE の WebView は gdk_set_allowed_backends("x11") で
+# X11 バックエンドを要求する。GNOME/Wayland セッションでは環境に GDK_BACKEND=wayland が
+# あり、許可バックエンドの積集合が空になって gtk_init が失敗する（"cannot open display"）。
+# X11 を明示指定して衝突を回避する（WSL2 等 GDK_BACKEND 未設定の環境でも無害）。
+export GDK_BACKEND=x11
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -28,6 +34,19 @@ TARGET=$(awk -F'[() ]+' '/^project\(/{print $2; exit}' CMakeLists.txt)
 if [[ -z "${TARGET:-}" ]]; then
     echo "ERROR: project() not found in CMakeLists.txt" >&2
     exit 1
+fi
+
+# WebUI（Vite）は埋め込み元 plugin/ui/public をビルド出力先にしている（webui/vite.config.ts の outDir）。
+# Release 系は plugin/ui/public を juce_add_binary_data で埋め込むため、C++ ビルド前に必ず webui を
+# 作り直す。これを省くと UI 変更がバイナリに反映されない（実際に発生）。Debug は localhost 直読みのため不要。
+if [[ "$CONFIG" != "Debug" ]]; then
+    echo "=== Build WebUI: vite build -> plugin/ui/public ==="
+    if [[ ! -d webui/node_modules ]]; then
+        echo "  node_modules が無いため npm ci を実行..."
+        ( cd webui && npm ci )
+    fi
+    ( cd webui && npm run build )
+    echo
 fi
 
 echo "=== Configure: ${TARGET} (${CONFIG}) -> ${BUILD_DIR}/ ==="

@@ -28,10 +28,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # JUCEをサブモジュールから追加
 add_subdirectory(JUCE)
 
-# clap-juce-extensions（Linux ビルドでのみ CLAP ターゲットを生成）
-if(UNIX AND NOT APPLE)
-    add_subdirectory(clap-juce-extensions EXCLUDE_FROM_ALL)
-endif()
+# clap-juce-extensions（CLAP ターゲットを Windows / macOS / Linux 全てで生成）
+# JUCE9 の CLAP 正式対応までの暫定: Windows DPI 修正パッチを add_subdirectory の前に適用する
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyClapPatch.cmake)
+add_subdirectory(clap-juce-extensions EXCLUDE_FROM_ALL)
 
 # AAX SDK の設定（存在する場合のみ有効）
 set(AAX_SDK_PATH "${CMAKE_SOURCE_DIR}/aax-sdk" CACHE PATH "Path to AAX SDK")

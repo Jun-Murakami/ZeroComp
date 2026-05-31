@@ -23,7 +23,7 @@
 
 namespace {
 
-std::vector<std::byte> streamToVector(juce::InputStream& stream)
+[[maybe_unused]] std::vector<std::byte> streamToVector(juce::InputStream& stream)
 {
     const auto sizeInBytes = static_cast<size_t>(stream.getTotalLength());
     std::vector<std::byte> result(sizeInBytes);
@@ -186,6 +186,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
       webReleaseRelay      { zc::id::RELEASE_MS.getParamID() },
       webOutputGainRelay   { zc::id::OUTPUT_GAIN.getParamID() },
       webAutoMakeupRelay   { zc::id::AUTO_MAKEUP.getParamID() },
+      webSidechainRelay    { zc::id::SIDECHAIN.getParamID() },
       webModeRelay         { zc::id::MODE.getParamID() },
       webMeteringModeRelay { zc::id::METERING_MODE.getParamID() },
       webDisplayModeRelay  { zc::id::DISPLAY_MODE.getParamID() },
@@ -196,6 +197,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
       releaseAttachment      { *p.getState().getParameter(zc::id::RELEASE_MS.getParamID()),    webReleaseRelay,      nullptr },
       outputGainAttachment   { *p.getState().getParameter(zc::id::OUTPUT_GAIN.getParamID()),   webOutputGainRelay,   nullptr },
       autoMakeupAttachment   { *p.getState().getParameter(zc::id::AUTO_MAKEUP.getParamID()),   webAutoMakeupRelay,   nullptr },
+      sidechainAttachment    { *p.getState().getParameter(zc::id::SIDECHAIN.getParamID()),     webSidechainRelay,    nullptr },
       modeAttachment         { *p.getState().getParameter(zc::id::MODE.getParamID()),          webModeRelay,         nullptr },
       meteringModeAttachment { *p.getState().getParameter(zc::id::METERING_MODE.getParamID()), webMeteringModeRelay, nullptr },
       displayModeAttachment  { *p.getState().getParameter(zc::id::DISPLAY_MODE.getParamID()),  webDisplayModeRelay,  nullptr },
@@ -221,6 +223,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
               .withOptionsFrom(webReleaseRelay)
               .withOptionsFrom(webOutputGainRelay)
               .withOptionsFrom(webAutoMakeupRelay)
+              .withOptionsFrom(webSidechainRelay)
               .withOptionsFrom(webModeRelay)
               .withOptionsFrom(webMeteringModeRelay)
               .withOptionsFrom(webDisplayModeRelay)
@@ -241,12 +244,50 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
                       if (args.size() > 0)
                       {
                           const auto action = args[0].toString();
+                          // ドラッグ開始時に CSS px → 論理 px の換算比率を 1 回だけ確定（MixCompare 方式）。
+                          if (action == "resizeBegin" && args.size() >= 3)
+                          {
+                              const double cssW = static_cast<double>(args[1]);
+                              const double cssH = static_cast<double>(args[2]);
+                              webResizeRatioW = (cssW > 0.0) ? static_cast<double>(getWidth())  / cssW : 1.0;
+                              webResizeRatioH = (cssH > 0.0) ? static_cast<double>(getHeight()) / cssH : 1.0;
+                              completion(juce::var{ true });
+                              return;
+                          }
+                          // WebUI 読込時。ratio を確定し、初回だけ初期サイズを「設計 CSS px × ratio」に合わせる。
+                          if (action == "apply_layout" && args.size() >= 3)
+                          {
+                              const double cssW = static_cast<double>(args[1]);
+                              const double cssH = static_cast<double>(args[2]);
+                              webResizeRatioW = (cssW > 0.0) ? static_cast<double>(getWidth())  / cssW : 1.0;
+                              webResizeRatioH = (cssH > 0.0) ? static_cast<double>(getHeight()) / cssH : 1.0;
+                            #if JUCE_LINUX || JUCE_BSD
+                              // constrainer の min/max も ratio 換算で論理 px に合わせる。VST3 は onSize→
+                              //  setBoundsConstrained で constrainer を適用するため、論理 px のままの min が
+                              //  apply_layout の目標(設計CSS×ratio)を上回るとクランプされ、CLAP と違って中身が
+                              //  はみ出す。CLAP は editor->setBounds で constrainer 非適用なので元から無害。
+                              resizerConstraints.setSizeLimits(juce::roundToInt(kMinWidth  * webResizeRatioW),
+                                                               juce::roundToInt(kMinHeight * webResizeRatioH),
+                                                               juce::roundToInt(kMaxWidth  * webResizeRatioW),
+                                                               juce::roundToInt(kMaxHeight * webResizeRatioH));
+                              if (!initialLayoutApplied)
+                              {
+                                  initialLayoutApplied = true;
+                                  setSize(juce::roundToInt(designTargetW * webResizeRatioW),
+                                          juce::roundToInt(designTargetH * webResizeRatioH));
+                              }
+                            #endif
+                              completion(juce::var{ true });
+                              return;
+                          }
                           if (action == "resizeTo" && args.size() >= 3)
                           {
-                              const int w = clampW(juce::roundToInt((double) args[1]));
-                              const int h = clampH(juce::roundToInt((double) args[2]));
-                              setSize(w, h);
-                              completion(juce::var{ true });
+                              // args は CSS px。CSS(設計)空間でクランプ → 固定比率を掛けて論理 px へ。
+                              const int cssW = clampW(juce::roundToInt((double) args[1]));
+                              const int cssH = clampH(juce::roundToInt((double) args[2]));
+                              applyWindowResize(juce::roundToInt(cssW * webResizeRatioW),
+                                                juce::roundToInt(cssH * webResizeRatioH),
+                                                std::move(completion));
                               return;
                           }
                           if (action == "resizeBy" && args.size() >= 3)
@@ -285,13 +326,25 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
 
     // 初期サイズ
     setSize(720, 460);
+    // 設計サイズ（CSS px 相当）を控える。apply_layout 初回に × ratio して論理 px へ直す。
+    designTargetW = getWidth();
+    designTargetH = getHeight();
 
     // リサイズ可能に（プラグイン/スタンドアロン共通）
     //  - OS ウィンドウ四辺 / ResizableCornerComponent / WebUI オーバーレイ
     //    すべて同じ最小・最大サイズを適用（window_action 側のクランプもこの定数を参照）
+    resizerConstraints.setSizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+#if JUCE_LINUX || JUCE_BSD
+    // Linux: Bitwig 等はホスト枠ドラッグをプラグインへ転送せず、枠を広げても黒余白が増えるだけ
+    //  なので「ユーザーによる枠リサイズは不可」とホストへ申告する（canResize/guiCanResize=false）。
+    //  リサイズは自前 WebUI ハンドル経由のみ。setResizeLimits は min≠max で resizableByHost を
+    //  true に戻すため使わず、独自 constrainer を設定して制限を管理する。
+    setConstrainer(&resizerConstraints);
+    setResizable(false, false);
+#else
     setResizable(true, true);
     setResizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
-    resizerConstraints.setSizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+#endif
 
     // リサイズグリッパー。WebView よりも前面に置き、WebUI 側の overlay から
     //   window_action.resizeTo を受けた時にも本体を正しく追従させる。
@@ -329,6 +382,23 @@ ZeroCompAudioProcessorEditor::~ZeroCompAudioProcessorEditor()
 {
     isShuttingDown.store(true, std::memory_order_release);
     stopTimer();
+
+#if JUCE_LINUX || JUCE_BSD
+    // 保留中のリサイズ ack completion は呼ばずに破棄（破棄中の WebView へのコールバックを避ける）。
+    resizeAckPending = false;
+    pendingResizeCompletion = {};
+#endif
+
+    // WebView を明示的に teardown してから破棄する。これをしないと Linux + NVIDIA で
+    //  Standalone 終了時に WebKit/EGL のクリーンアップ順序が崩れ、libEGL_nvidia の atexit で
+    //  SEGV する（JUCE 8.0.13 の外部サブプロセス化とあわせて確実にする。MixCompare と同じ手順）。
+    if (webViewLifetimeGuard.isConstructed())
+    {
+        webView.goToURL("about:blank");
+        webView.stop();
+        webView.setVisible(false);
+    }
+    removeChildComponent(&webView);
 }
 
 void ZeroCompAudioProcessorEditor::paint(juce::Graphics& g)
@@ -345,6 +415,55 @@ void ZeroCompAudioProcessorEditor::resized()
         resizer->setBounds(getWidth() - gripperSize, getHeight() - gripperSize, gripperSize, gripperSize);
         resizer->toFront(true);
     }
+
+#if JUCE_LINUX || JUCE_BSD
+    // ホスト主導の resized()（= guiSetSize/onSize の echo）が着地したら保留 resizeTo を確定。
+    //  自分の setSize 起因（resizeSelfDriven）はホスト確定ではないので無視する。
+    if (resizeAckPending && !resizeSelfDriven)
+        resolveResizeAck();
+#endif
+}
+
+void ZeroCompAudioProcessorEditor::resolveResizeAck()
+{
+    if (!resizeAckPending)
+        return;
+    resizeAckPending = false;
+    auto completion = std::move(pendingResizeCompletion);
+    pendingResizeCompletion = {};
+    if (completion)
+        completion(juce::var{ true });
+}
+
+void ZeroCompAudioProcessorEditor::applyWindowResize(
+    int targetW, int targetH, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+{
+#if JUCE_LINUX || JUCE_BSD
+    // Linux 限定の「真のバックプレッシャ」: completion を即返さず、ホストが実際にリサイズし終える
+    //  （resized() が再発火する）まで保留する。JS は往復1件ずつ送るようになり、高頻度送信で
+    //  ホストがリクエストを取りこぼす齟齬（黒残り/見切れ）を防ぐ。
+    resolveResizeAck();  // 以前の保留が残っていれば先に解決（安全策）
+    lastResizeActivityMs = juce::Time::getMillisecondCounter();
+    settleReconcileDone = false;
+
+    if (getWidth() != targetW || getHeight() != targetH)
+    {
+        pendingResizeCompletion = std::move(completion);
+        resizeAckPending = true;
+        resizeAckStartMs = juce::Time::getMillisecondCounter();
+        const juce::ScopedValueSetter<bool> selfDriven(resizeSelfDriven, true);
+        setSize(targetW, targetH);
+        // ホストが echo を返さない場合は timerCallback の安全タイムアウトで確定。
+    }
+    else
+    {
+        completion(juce::var{ true });  // サイズ不変なら往復不要
+    }
+#else
+    // Windows / macOS: 従来どおり即時 setSize + 即完了。
+    setSize(targetW, targetH);
+    completion(juce::var{ true });
+#endif
 }
 
 std::optional<ZeroCompAudioProcessorEditor::Resource>
@@ -435,8 +554,41 @@ void ZeroCompAudioProcessorEditor::pollAndMaybeNotifyDpiChange()
 
 void ZeroCompAudioProcessorEditor::timerCallback()
 {
+#if JUCE_LINUX || JUCE_BSD
+    // リサイズ ack の安全タイムアウト: ホストが echo を返さない場合でも保留 completion を必ず
+    //  解決し、JS のバックプレッシャがフリーズしないようにする（~45ms = 最低 ~22fps を保証）。
+    if (resizeAckPending
+        && (juce::Time::getMillisecondCounter() - resizeAckStartMs) > 45)
+        resolveResizeAck();
+#endif
+
     if (isShuttingDown.load(std::memory_order_acquire)) return;
     if (! webViewLifetimeGuard.isConstructed()) return;
+
+#if JUCE_LINUX || JUCE_BSD
+    // リサイズ落ち着き後の強制再同期（2 tick に分割した 1px ジグル）。editor が既に最終サイズだと
+    //  resized() が発火せず、ホストのコンテナ窓が中間サイズで取り残されても再同期されない。
+    //  1px だけ変えて戻すことで guiRequestResize/webView.setBounds を再発火させ収束。2 tick に
+    //  分けるのは、同期連続 setBounds が WebKitGTK の描画を固める不具合を避けるため。
+    if (resyncStep2Pending)
+    {
+        resyncStep2Pending = false;
+        const juce::ScopedValueSetter<bool> selfDriven(resizeSelfDriven, true);
+        setSize(resyncTargetW, resyncTargetH);
+    }
+    else if (!settleReconcileDone
+        && !resizeAckPending
+        && isVisible()
+        && (juce::Time::getMillisecondCounter() - lastResizeActivityMs) > 120)
+    {
+        settleReconcileDone = true;
+        resyncTargetW = getWidth();
+        resyncTargetH = getHeight();
+        resyncStep2Pending = true;
+        const juce::ScopedValueSetter<bool> selfDriven(resizeSelfDriven, true);
+        setSize(resyncTargetW, juce::jmax(1, resyncTargetH - 1));
+    }
+#endif
 
    #if defined(JUCE_WINDOWS)
     // 各フレームで HWND の DPI 変化をチェック（ディスプレイ間移動対応）

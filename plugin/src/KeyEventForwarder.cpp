@@ -14,8 +14,207 @@
  #include <unistd.h> // getpid
 #endif
 
+#if JUCE_LINUX || JUCE_BSD
+ // X11 ヘッダは JUCE のシンボルと競合しやすいマクロ(None/Bool/KeyPress 等)を定義するため、
+ //  実装側でのみ・JUCE ヘッダの後にインクルードする。
+ #include <X11/Xlib.h>
+ #include <X11/keysym.h>
+ #include <cstring>
+ #include <unordered_map>
+#endif
+
 namespace zc
 {
+
+#if JUCE_LINUX || JUCE_BSD
+// ---- Linux(X11) 実装 ----------------------------------------------------------
+//  Windows の PostMessage 相当。ホストのトップレベルウィンドウへ XSendEvent でキーイベントを
+//  合成送出し、DAW のキーボードショートカットへ届ける。WebView(別プロセスの WebKitGTK)が
+//  キーを奪うため、JS→native→XSendEvent でホストに橋渡しする。
+namespace
+{
+    // 送出用の X11 接続（ウィンドウ ID は X サーバ全体で有効なので別接続でも送れる）。1 回だけ開く。
+    Display* getForwardingDisplay()
+    {
+        static Display* display = XOpenDisplay (nullptr);
+        return display;
+    }
+
+    // プラグインの埋め込みウィンドウから親を辿り、root 直下のトップレベル（= DAW の窓）を返す。
+    ::Window resolveHostTopLevel (Display* display, ::Window start)
+    {
+        const ::Window root = DefaultRootWindow (display);
+        ::Window current = start;
+        for (int guard = 0; guard < 24 && current != 0; ++guard)
+        {
+            ::Window r = 0, parent = 0, *children = nullptr;
+            unsigned int numChildren = 0;
+            if (! XQueryTree (display, current, &r, &parent, &children, &numChildren))
+                break;
+            if (children != nullptr)
+                XFree (children);
+            if (parent == 0 || parent == root)
+                break; // current が root 直下のトップレベル
+            current = parent;
+        }
+        return current;
+    }
+
+    // DOM の code（物理キー）/ key（文字）から X11 KeySym へ変換（Windows の domCodeToVirtualKey 相当）。
+    KeySym domToKeysym (const juce::String& code, const juce::String& key)
+    {
+        static const std::unordered_map<juce::String, KeySym> table = []
+        {
+            std::unordered_map<juce::String, KeySym> m;
+            m.emplace ("Space", XK_space);
+            m.emplace ("Enter", XK_Return);
+            m.emplace ("NumpadEnter", XK_KP_Enter);
+            m.emplace ("Tab", XK_Tab);
+            m.emplace ("Backspace", XK_BackSpace);
+            m.emplace ("Delete", XK_Delete);
+            m.emplace ("Escape", XK_Escape);
+            m.emplace ("ArrowUp", XK_Up);
+            m.emplace ("ArrowDown", XK_Down);
+            m.emplace ("ArrowLeft", XK_Left);
+            m.emplace ("ArrowRight", XK_Right);
+            m.emplace ("Home", XK_Home);
+            m.emplace ("End", XK_End);
+            m.emplace ("PageUp", XK_Prior);
+            m.emplace ("PageDown", XK_Next);
+            m.emplace ("Insert", XK_Insert);
+            m.emplace ("CapsLock", XK_Caps_Lock);
+            m.emplace ("ShiftLeft", XK_Shift_L);
+            m.emplace ("ShiftRight", XK_Shift_R);
+            m.emplace ("ControlLeft", XK_Control_L);
+            m.emplace ("ControlRight", XK_Control_R);
+            m.emplace ("AltLeft", XK_Alt_L);
+            m.emplace ("AltRight", XK_Alt_R);
+            m.emplace ("MetaLeft", XK_Super_L);
+            m.emplace ("MetaRight", XK_Super_R);
+            m.emplace ("ContextMenu", XK_Menu);
+            m.emplace ("NumLock", XK_Num_Lock);
+            m.emplace ("ScrollLock", XK_Scroll_Lock);
+            m.emplace ("Pause", XK_Pause);
+            m.emplace ("PrintScreen", XK_Print);
+            m.emplace ("Minus", XK_minus);
+            m.emplace ("Equal", XK_equal);
+            m.emplace ("BracketLeft", XK_bracketleft);
+            m.emplace ("BracketRight", XK_bracketright);
+            m.emplace ("Backslash", XK_backslash);
+            m.emplace ("IntlBackslash", XK_less);
+            m.emplace ("Semicolon", XK_semicolon);
+            m.emplace ("Quote", XK_apostrophe);
+            m.emplace ("Comma", XK_comma);
+            m.emplace ("Period", XK_period);
+            m.emplace ("Slash", XK_slash);
+            m.emplace ("Backquote", XK_grave);
+            m.emplace ("NumpadDecimal", XK_KP_Decimal);
+            m.emplace ("NumpadDivide", XK_KP_Divide);
+            m.emplace ("NumpadMultiply", XK_KP_Multiply);
+            m.emplace ("NumpadSubtract", XK_KP_Subtract);
+            m.emplace ("NumpadAdd", XK_KP_Add);
+            m.emplace ("NumpadEqual", XK_KP_Equal);
+            m.emplace ("NumpadComma", XK_KP_Separator);
+            return m;
+        }();
+
+        if (const auto it = table.find (code); it != table.end())
+            return it->second;
+
+        // KeyA-KeyZ → XK_a..XK_z（小文字。Shift は state 側で表現）
+        if (code.startsWith ("Key") && code.length() == 4)
+        {
+            const auto letter = juce::CharacterFunctions::toLowerCase (code[3]);
+            if (letter >= 'a' && letter <= 'z')
+                return static_cast<KeySym> (XK_a + (letter - 'a'));
+        }
+        // Digit0-Digit9
+        if (code.startsWith ("Digit") && code.length() == 6)
+        {
+            const auto d = code[5];
+            if (d >= '0' && d <= '9')
+                return static_cast<KeySym> (XK_0 + (d - '0'));
+        }
+        // Numpad0-Numpad9
+        if (code.startsWith ("Numpad") && code.length() == 7)
+        {
+            const auto d = code[6];
+            if (d >= '0' && d <= '9')
+                return static_cast<KeySym> (XK_KP_0 + (d - '0'));
+        }
+        // F1-F24
+        if (code.startsWith ("F") && code.length() >= 2)
+        {
+            const int fn = code.substring (1).getIntValue();
+            if (fn >= 1 && fn <= 24)
+                return static_cast<KeySym> (XK_F1 + fn - 1);
+        }
+        // フォールバック: 1 文字の key は XStringToKeysym で解決（記号等）
+        if (key.length() == 1)
+        {
+            const auto ks = XStringToKeysym (key.toRawUTF8());
+            if (ks != NoSymbol)
+                return ks;
+        }
+        return NoSymbol;
+    }
+
+    bool dispatchKeyEventUsingX11 (const juce::var& eventData, juce::Component* editorComponent, bool isKeyDown)
+    {
+        Display* display = getForwardingDisplay();
+        if (display == nullptr || editorComponent == nullptr)
+            return false;
+
+        auto* peer = editorComponent->getPeer();
+        if (peer == nullptr)
+            return false;
+
+        const ::Window pluginWindow = (::Window) peer->getNativeHandle();
+        if (pluginWindow == 0)
+            return false;
+
+        const juce::String code = eventData.getProperty ("code", juce::var{}).toString();
+        const juce::String key  = eventData.getProperty ("key",  juce::var{}).toString();
+        const KeySym keysym = domToKeysym (code, key);
+        if (keysym == NoSymbol)
+            return false;
+
+        const KeyCode keycode = XKeysymToKeycode (display, keysym);
+        if (keycode == 0)
+            return false;
+
+        unsigned int state = 0;
+        if (static_cast<bool> (eventData.getProperty ("shiftKey", false))) state |= ShiftMask;
+        if (static_cast<bool> (eventData.getProperty ("ctrlKey",  false))) state |= ControlMask;
+        if (static_cast<bool> (eventData.getProperty ("altKey",   false))) state |= Mod1Mask;
+        if (static_cast<bool> (eventData.getProperty ("metaKey",  false))) state |= Mod4Mask;
+
+        const ::Window target = resolveHostTopLevel (display, pluginWindow);
+        if (target == 0)
+            return false;
+
+        XKeyEvent ev;
+        std::memset (&ev, 0, sizeof (ev));
+        ev.display     = display;
+        ev.window      = target;
+        ev.root        = DefaultRootWindow (display);
+        ev.subwindow   = None;
+        ev.time        = CurrentTime;
+        ev.same_screen = True;
+        ev.x = ev.y = 1;
+        ev.x_root = ev.y_root = 1;
+        ev.state    = state;
+        ev.keycode  = keycode;
+        ev.type     = isKeyDown ? KeyPress : KeyRelease;
+
+        XSendEvent (display, target, True, isKeyDown ? KeyPressMask : KeyReleaseMask,
+                    reinterpret_cast<XEvent*> (&ev));
+        XFlush (display);
+        return true;
+    }
+} // anonymous namespace
+#endif // JUCE_LINUX || JUCE_BSD
+
 
 bool KeyEventForwarder::forwardKeyEventToHost(const juce::var& eventData, juce::Component* editorComponent)
 {
@@ -128,6 +327,9 @@ bool KeyEventForwarder::forwardKeyEventToHost(const juce::var& eventData, juce::
 
 #elif JUCE_MAC
     return dispatchKeyEventUsingCocoa(eventData, editorComponent);
+#elif JUCE_LINUX || JUCE_BSD
+    // X11: ホストのトップレベルウィンドウへキーイベントを合成送出する（Windows の PostMessage 相当）。
+    return dispatchKeyEventUsingX11 (eventData, editorComponent, isKeyDown);
 #else
     return false;
 #endif

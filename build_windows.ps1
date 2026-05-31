@@ -272,6 +272,15 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Success "Standalone built successfully"
 
+# Build CLAP
+Write-Step "Building CLAP plugin..."
+cmake --build . --config $Configuration --target ZeroComp_CLAP
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CLAP build failed"
+    exit 1
+}
+Write-Success "CLAP built successfully"
+
 # Build AAX if SDK is available
 if ($BuildAAX) {
     Write-Step "Building AAX plugin..."
@@ -320,6 +329,23 @@ if (Test-Path $SourceStandalone) {
     Write-Success "Standalone copied successfully"
 } else {
     Write-Error "Standalone build output not found at: $SourceStandalone"
+    exit 1
+}
+
+# Copy CLAP files
+# CLAP は単一ファイル（.clap = DLL に拡張子を付けたもの）。Authenticode 署名は Step 3.5 で実施。
+Write-Step "Copying CLAP files..."
+$SourceCLAP = "$BuildDir\plugin\ZeroComp_artefacts\$Configuration\CLAP\ZeroComp.clap"
+$DestCLAP = "$OutputDir\Windows\ZeroComp.clap"
+
+if (Test-Path $SourceCLAP) {
+    if (Test-Path $DestCLAP) {
+        Remove-Item -Path $DestCLAP -Force
+    }
+    Copy-Item -Path $SourceCLAP -Destination $DestCLAP -Force
+    Write-Success "CLAP copied successfully"
+} else {
+    Write-Error "CLAP build output not found at: $SourceCLAP"
     exit 1
 }
 
@@ -459,7 +485,8 @@ if ($BuildAAX) {
 # binary externally would HashMismatch).
 Write-Header "Step 3.5: Signing Windows binaries (Authenticode)"
 $Vst3InnerPE = Join-Path $DestVST3 ("Contents\x86_64-win\" + [IO.Path]::GetFileNameWithoutExtension($DestVST3) + ".vst3")
-Invoke-AuthenticodeSign -Paths @($Vst3InnerPE, $DestStandalone) | Out-Null
+# CLAP は実体が DLL (PE) なので Authenticode 署名対象に含める。
+Invoke-AuthenticodeSign -Paths @($Vst3InnerPE, $DestStandalone, $DestCLAP) | Out-Null
 
 # Create README
 Write-Step "Creating documentation..."
@@ -485,12 +512,16 @@ Installation Steps
    Copy ZeroComp.exe to any preferred location, for example:
    C:\Program Files\ZeroComp\ or your Desktop.
 
+4. For CLAP Plugin:
+   Copy ZeroComp.clap to the following location:
+   C:\Program Files\Common Files\CLAP\
+
 "@
 
 if ($BuildAAX) {
     $ReadmeContent += @"
 
-4. For AAX Plugin (Pro Tools):
+5. For AAX Plugin (Pro Tools):
    Copy the entire ZeroComp.aaxplugin folder to the following location:
    C:\Program Files\Common Files\Avid\Audio\Plug-Ins\
 
@@ -499,11 +530,11 @@ if ($BuildAAX) {
 
 $ReadmeContent += @"
 
-5. If Windows Defender SmartScreen appears:
+6. If Windows Defender SmartScreen appears:
    Click "More info"
    Then click "Run anyway"
 
-6. Launch your DAW and rescan for plugins.
+7. Launch your DAW and rescan for plugins.
 "@
 
 $ReadmeContent | Out-File -FilePath "$OutputDir\Windows\ReadMe.txt" -Encoding UTF8
@@ -512,7 +543,7 @@ Write-Success "Documentation created"
 # Create version.json
 Write-Step "Creating version information..."
 # Build formats list
-$formats = @("VST3", "Standalone")
+$formats = @("VST3", "Standalone", "CLAP")
 if ($BuildAAX) {
     $formats += "AAX"
 }
@@ -574,9 +605,9 @@ if (Test-Path $InnoSetupPath) {
 # Create ZIP archive (as backup or alternative distribution)
 Write-Step "Creating ZIP archive..."
 if ($BuildAAX) {
-    $ZipName = "ZeroComp_${Version}_Windows_VST3_AAX_Standalone.zip"
+    $ZipName = "ZeroComp_${Version}_Windows_VST3_AAX_CLAP_Standalone.zip"
 } else {
-    $ZipName = "ZeroComp_${Version}_Windows_VST3_Standalone.zip"
+    $ZipName = "ZeroComp_${Version}_Windows_VST3_CLAP_Standalone.zip"
 }
 $ZipPath = "$OutputDir\$ZipName"
 
@@ -624,6 +655,7 @@ if ($BuildAAX) {
 Write-Host "The package includes:" -ForegroundColor Cyan
 Write-Host "[✓] ZeroComp.vst3 (with embedded WebUI)" -ForegroundColor Green
 Write-Host "[✓] ZeroComp.exe (Standalone application)" -ForegroundColor Green
+Write-Host "[✓] ZeroComp.clap (CLAP plugin)" -ForegroundColor Green
 if ($BuildAAX) {
     Write-Host "[✓] ZeroComp.aaxplugin ($AAXSigningStatusSummary)" -ForegroundColor Green
 }
@@ -633,9 +665,9 @@ Write-Host ""
 Write-Host "Distribution checklist:" -ForegroundColor Cyan
 Write-Host "[✓] WebUI built and embedded" -ForegroundColor Green
 if ($BuildAAX) {
-    Write-Host "[✓] VST3, Standalone, and AAX compiled in $Configuration mode" -ForegroundColor Green
+    Write-Host "[✓] VST3, Standalone, CLAP, and AAX compiled in $Configuration mode" -ForegroundColor Green
 } else {
-    Write-Host "[✓] VST3 and Standalone compiled in $Configuration mode" -ForegroundColor Green
+    Write-Host "[✓] VST3, Standalone, and CLAP compiled in $Configuration mode" -ForegroundColor Green
 }
 if (Test-Path "$OutputDir\ZeroComp_${Version}_Windows_Setup.exe") {
     Write-Host "[✓] Installer created with Inno Setup" -ForegroundColor Green

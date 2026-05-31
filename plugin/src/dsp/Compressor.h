@@ -53,9 +53,14 @@ public:
     //  detectionBuffer は numSamples が buffer と一致している必要がある。チャネル数は 1 でも 2 以上でも可。
     // gainOut != nullptr なら各サンプルで適用された gain（リニア, 0..1）を書き出す。
     //  配列長は最低でも `buffer.getNumSamples()` 必要。
+    // externalDetectRequested: 外部サイドチェイン検出が ON か。検出ソースが無い（detectionBuffer が
+    //  null か無音）ときの挙動を決める。false なら検出ソースが無ければメイン信号で検出（内部検出）。
+    //  true なら検出ソースが無ければ「無音」で検出する（メインにフォールバックしない）→ SC 有効でも
+    //  何も繋いでいなければ一切コンプが掛からない（一般的な挙動）。
     float processBlock(juce::AudioBuffer<float>& buffer,
                        const juce::AudioBuffer<float>* detectionBuffer = nullptr,
-                       float* gainOut = nullptr) noexcept;
+                       float* gainOut = nullptr,
+                       bool externalDetectRequested = false) noexcept;
 
 private:
     // 入力 dB を GR（dB, 正値 = どれだけ下げるか）にマップする静的カーブ

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Jun Murakami
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { Box, Input, Slider, Typography } from '@mui/material';
 import { darken, lighten, styled } from '@mui/material/styles';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
@@ -166,9 +166,6 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
   const [inputText, setInputText] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
 
-  const valueRef = useRef<number>(value);
-  valueRef.current = value;
-
   // log スキュー時でも frontend-mirror は線形解釈で scaled 値を送る仕様。
   //  そのため setNormalised(log正規化値) では JUCE 側の値がズレる。
   //  setScaled(true_value, min, max) は線形正規化して送るので、log/linear どちらでも正しく往復する。
@@ -226,8 +223,8 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
     },
     onDragStart: () => {
       fineDragStartRef.current = {
-        value: valueRef.current,
-        norm: valueToNorm(valueRef.current, min, max, skew),
+        value: value,
+        norm: valueToNorm(value, min, max, skew),
       };
       sliderState?.sliderDragStarted();
     },
@@ -246,32 +243,37 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
     onDragEnd: () => sliderState?.sliderDragEnded(),
   });
 
+  // wheel リスナーは effect 内で 1 回だけ登録し、最新 value/skew/min/max/inverted を
+  //  Effect Event 経由で読む（Latest Ref Pattern の置換）。依存配列は空にできる。
+  //  visualUp: ホイール上方向 = フェーダー本体が視覚的に上に動く方向。
+  const applyWheel = useEffectEvent((visualUp: 1 | -1, fine: boolean) => {
+    // inverted のフェーダーでは上 = 小さい値なので、方向を反転させる。
+    const direction = inverted ? -visualUp : visualUp;
+    const step = fine ? wheelStepFine : wheelStep;
+    if (skew === 'log') {
+      const normStep = step / 100;
+      const curNorm = valueToNorm(value, min, max, skew);
+      applyValue(normToValue(curNorm + normStep * direction, min, max, skew));
+    } else {
+      applyValue(value + step * direction);
+    }
+  });
+
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = wheelRef.current;
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      // ホイールの "上方向" を常に「フェーダー本体が視覚的に上に動く」方向に揃える。
-      //  inverted のフェーダーでは上 = 小さい値なので、方向を反転させる。
-      const visualUp = -event.deltaY > 0 ? 1 : -1;
-      const direction = inverted ? -visualUp : visualUp;
+      const visualUp: 1 | -1 = -event.deltaY > 0 ? 1 : -1;
       const fine = event.shiftKey || event.ctrlKey || event.metaKey || event.altKey;
-      const step = fine ? wheelStepFine : wheelStep;
-      if (skew === 'log') {
-        const normStep = step / 100;
-        const curNorm = valueToNorm(valueRef.current, min, max, skew);
-        applyValue(normToValue(curNorm + normStep * direction, min, max, skew));
-      } else {
-        applyValue(valueRef.current + step * direction);
-      }
+      applyWheel(visualUp, fine);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       el.removeEventListener('wheel', onWheel as EventListener);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [min, max, wheelStep, wheelStepFine, skew, inverted]);
+  }, []);
 
   // 数値入力欄のホイール / 縦ドラッグ
   //   inverted フェーダー（RATIO など：上が min / 下が max）では、フェーダー操作の
@@ -285,16 +287,16 @@ export const ParameterFader: React.FC<ParameterFaderProps> = ({
       const step = fine ? wheelStepFine : wheelStep;
       if (skew === 'log') {
         const normStep = step / 100;
-        const curNorm = valueToNorm(valueRef.current, min, max, skew);
+        const curNorm = valueToNorm(value, min, max, skew);
         applyValue(normToValue(curNorm + normStep * signedDir, min, max, skew));
       } else {
-        applyValue(valueRef.current + step * signedDir);
+        applyValue(value + step * signedDir);
       }
     },
     onDragStart: () => {
       inputDragStartRef.current = {
-        value: valueRef.current,
-        norm: valueToNorm(valueRef.current, min, max, skew),
+        value: value,
+        norm: valueToNorm(value, min, max, skew),
       };
       sliderState?.sliderDragStarted();
     },

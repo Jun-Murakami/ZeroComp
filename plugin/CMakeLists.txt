@@ -66,12 +66,10 @@ juce_add_plugin(ZeroComp
 
 juce_generate_juce_header(ZeroComp)
 
-# Linux ビルド時のみ CLAP ターゲットを生成（clap-juce-extensions 経由）
-if(UNIX AND NOT APPLE)
-    clap_juce_extensions_plugin(TARGET ZeroComp
-        CLAP_ID "com.junmurakami.zerocomp"
-        CLAP_FEATURES audio-effect compressor)
-endif()
+# CLAP ターゲット生成（clap-juce-extensions 経由・Windows / macOS / Linux 全て）
+clap_juce_extensions_plugin(TARGET ZeroComp
+    CLAP_ID "com.junmurakami.zerocomp"
+    CLAP_FEATURES audio-effect compressor)
 
 # ソースファイル
 target_sources(ZeroComp PRIVATE
@@ -128,6 +126,14 @@ target_link_libraries(ZeroComp
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+
+# Linux: KeyEventForwarder の X11 キーイベント合成送出（XSendEvent 等）に libX11 を明示リンク。
+#  JUCE はプラグインターゲットへ X11 を直接リンクしないため、自前で追加する。
+if(UNIX AND NOT APPLE)
+    find_package(X11 REQUIRED)
+    target_link_libraries(ZeroComp PRIVATE ${X11_LIBRARIES})
+    target_include_directories(ZeroComp PRIVATE ${X11_INCLUDE_DIR})
+endif()
 
 # macOS: ヘッダパッド確保（署名/wraptool 対策）
 if(APPLE)

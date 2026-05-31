@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Jun Murakami
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useEffectEvent } from 'react';
 
 export interface NumberInputAdjustOptions {
   /** wheel: 方向 (+1/-1) と fine フラグ（Ctrl/Cmd/Shift/Alt のいずれか押下） */
@@ -31,8 +31,10 @@ export function useNumberInputAdjust(
   inputRef: React.RefObject<HTMLElement | null>,
   options: NumberInputAdjustOptions,
 ) {
-  const optsRef = useRef<NumberInputAdjustOptions>(options);
-  optsRef.current = options;
+  // effect 内のリスナーから最新 options を読むための Effect Event。
+  //  Latest Ref Pattern（render 中の ref 書き換え）を React 19 の useEffectEvent で置換。
+  //  非リアクティブなので effect の依存配列は [inputRef] のままで最新値を参照できる。
+  const latest = useEffectEvent(() => options);
 
   useEffect(() => {
     const el = inputRef.current;
@@ -45,7 +47,7 @@ export function useNumberInputAdjust(
       e.preventDefault();
       const direction = -e.deltaY > 0 ? 1 : -1;
       const fine = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
-      optsRef.current.onWheelStep(direction, fine);
+      latest().onWheelStep(direction, fine);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -56,7 +58,7 @@ export function useNumberInputAdjust(
       const startY = e.clientY;
       const pointerId = e.pointerId;
       let moved = false;
-      const threshold = optsRef.current.moveThreshold ?? 3;
+      const threshold = latest().moveThreshold ?? 3;
 
       // 先にネイティブ focus を止める（クリックのみ確定時に onUp 内で明示 focus する）
       e.preventDefault();
@@ -67,11 +69,11 @@ export function useNumberInputAdjust(
         const dy = ev.clientY - startY;
         if (!moved && Math.hypot(dx, dy) >= threshold) {
           moved = true;
-          optsRef.current.onDragStart();
+          latest().onDragStart();
         }
         if (moved) {
           const fine = ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey;
-          optsRef.current.onDragDelta(-dy, fine);
+          latest().onDragDelta(-dy, fine);
         }
       };
 
@@ -79,10 +81,11 @@ export function useNumberInputAdjust(
         if (ev.pointerId !== pointerId) return;
         cleanup();
         if (moved) {
-          optsRef.current.onDragEnd();
+          latest().onDragEnd();
         } else {
-          if (optsRef.current.onClickEditFallback) {
-            optsRef.current.onClickEditFallback(el);
+          const fallback = latest().onClickEditFallback;
+          if (fallback) {
+            fallback(el);
           } else {
             el.focus();
             if (el instanceof HTMLInputElement) el.select();
@@ -93,7 +96,7 @@ export function useNumberInputAdjust(
       const onCancel = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return;
         cleanup();
-        if (moved) optsRef.current.onDragEnd();
+        if (moved) latest().onDragEnd();
       };
 
       const cleanup = () => {

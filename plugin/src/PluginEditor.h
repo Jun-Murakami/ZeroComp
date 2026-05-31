@@ -41,6 +41,7 @@ private:
     juce::WebSliderRelay       webReleaseRelay;
     juce::WebSliderRelay       webOutputGainRelay;
     juce::WebToggleButtonRelay webAutoMakeupRelay;
+    juce::WebToggleButtonRelay webSidechainRelay;
     juce::WebComboBoxRelay     webModeRelay;
     juce::WebComboBoxRelay     webMeteringModeRelay;
     juce::WebComboBoxRelay     webDisplayModeRelay; // Metering / Waveform
@@ -52,6 +53,7 @@ private:
     juce::WebSliderParameterAttachment       releaseAttachment;
     juce::WebSliderParameterAttachment       outputGainAttachment;
     juce::WebToggleButtonParameterAttachment autoMakeupAttachment;
+    juce::WebToggleButtonParameterAttachment sidechainAttachment;
     juce::WebComboBoxParameterAttachment     modeAttachment;
     juce::WebComboBoxParameterAttachment     meteringModeAttachment;
     juce::WebComboBoxParameterAttachment     displayModeAttachment;
@@ -72,6 +74,31 @@ private:
 
     std::unique_ptr<juce::ResizableCornerComponent> resizer;
     juce::ComponentBoundsConstrainer resizerConstraints;
+
+    // --- Linux 限定のウィンドウ制御（[[linux-dpi-resize-scaling]] と同方針）---
+    //  Bitwig 等はホスト枠ドラッグをプラグインへ転送しないため、Linux では枠リサイズを無効化し
+    //  （setResizable(false)）、自前ハンドル（window_action.resizeTo→setSize→host request_resize）
+    //  のみ許可する。高頻度リサイズで取り残された黒残り/見切れは、ホストの echo 待ち（バック
+    //  プレッシャ）と落ち着き後の 1px ジグル再同期で収束させる。Windows/macOS は従来どおり。
+    void applyWindowResize(int targetW, int targetH,
+                           juce::WebBrowserComponent::NativeFunctionCompletion completion);
+    void resolveResizeAck();
+    bool   resizeAckPending { false };
+    bool   resizeSelfDriven { false };
+    juce::uint32 resizeAckStartMs { 0 };
+    juce::WebBrowserComponent::NativeFunctionCompletion pendingResizeCompletion;
+    juce::uint32 lastResizeActivityMs { 0 };
+    bool   settleReconcileDone { true };
+    bool   resyncStep2Pending { false };
+    int    resyncTargetW { 0 };
+    int    resyncTargetH { 0 };
+    // CSS px → 論理 px の換算比率（resizeBegin/apply_layout で確定し resizeTo/初期サイズに適用）。
+    //  分数スケーリング環境でハンドル(CSS px)とウィンドウ(論理px)、初期サイズのズレを防ぐ（MixCompare 方式）。
+    double webResizeRatioW { 1.0 };
+    double webResizeRatioH { 1.0 };
+    bool   initialLayoutApplied { false };
+    int    designTargetW { 720 };
+    int    designTargetH { 460 };
 
     std::atomic<bool> isShuttingDown{ false };
 

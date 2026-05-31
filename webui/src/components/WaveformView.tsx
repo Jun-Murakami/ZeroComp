@@ -95,26 +95,33 @@ export const WaveformView: React.FC<WaveformViewProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // 表示用リングバッファ（slice 単位）。サイズはスライスレート × 秒数。
-  //  lazy init: useRef(new Float32Array(...)) だと毎レンダーで引数式が評価されて
-  //  初期化用配列が無駄に生成される（最終的に捨てられる）。ref.current を遅延初期化することで
-  //  最初の 1 回だけ割り当てる。
+  //  render 中の ref アクセス（react-hooks/refs）を避けるため確保は layout effect 内で行い、
+  //  bufferLen が変わった時だけ再確保する（旧 lazy-init と同じく確保は最小回数）。
   const bufferLen = Math.max(16, Math.round(sliceHz * seconds));
   const peaksRef = useRef<Float32Array | null>(null);
-  const grDbRef  = useRef<Float32Array | null>(null);
-  if (peaksRef.current === null || peaksRef.current.length !== bufferLen) {
-    peaksRef.current = new Float32Array(bufferLen);
-    grDbRef.current  = new Float32Array(bufferLen);
-  }
+  const grDbRef = useRef<Float32Array | null>(null);
   const writeIdxRef = useRef<number>(0);
 
-  // 最新の threshold / isResizing を render 中 ref で保持（draw ループから参照）
-  const thresholdRef = useRef<number>(thresholdDb);
-  thresholdRef.current = thresholdDb;
-  const isResizingRef = useRef<boolean>(isResizing);
-  isResizingRef.current = isResizing;
+  useLayoutEffect(() => {
+    if (!peaksRef.current || peaksRef.current.length !== bufferLen) {
+      peaksRef.current = new Float32Array(bufferLen);
+      grDbRef.current = new Float32Array(bufferLen);
+      writeIdxRef.current = 0;
+    }
+  }, [bufferLen]);
 
+  // 最新の threshold / isResizing / サイズを draw ループから参照するための ref。
+  //  render 中ではなく layout effect 内で更新して react-hooks/refs（render 中 ref 書き換え禁止）に準拠する。
+  //  この effect は下の setup 用 layout effect より前に宣言しているため、同一コミット内で
+  //  draw が呼ばれる前に必ず最新値へ更新される。
+  const thresholdRef = useRef<number>(thresholdDb);
+  const isResizingRef = useRef<boolean>(isResizing);
   const sizeRef = useRef<{ w: number; h: number }>({ w: width, h: height });
-  sizeRef.current = { w: width, h: height };
+  useLayoutEffect(() => {
+    thresholdRef.current = thresholdDb;
+    isResizingRef.current = isResizing;
+    sizeRef.current = { w: width, h: height };
+  });
 
   const drawRef = useRef<() => void>(() => {});
 

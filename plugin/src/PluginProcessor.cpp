@@ -116,6 +116,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroCompAudioProcessor::crea
         0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
+    // SIDECHAIN: bool。既定 OFF。ON 時のみ外部サイドチェイン入力（バス 1）を検出ソースにする。
+    //  ホストのバス有効化挙動（Bitwig + CLAP は未接続でもバスを active 化する）に依存しないための明示トグル。
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        zc::id::SIDECHAIN,
+        "Sidechain",
+        false));
+
     // RATIO: 1..100（log skew）
     //  内部は 1:1 〜 100:1 のリニア値。UI には "N:1" 表示を任せる。
     //  既定 1:1 = スルー相当（ユーザが明示的に動かすまでは圧縮しない）。
@@ -294,8 +301,12 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     const int numSamples  = mainBuffer.getNumSamples();
     if (numSamples <= 0 || numChannels <= 0) return;
 
-    // SC バスはホストが有効化したときだけ非ゼロチャネル。
-    const bool scActive = scBuffer.getNumChannels() > 0;
+    // サイドチェイン検出は明示トグル（SIDECHAIN パラメータ）で ON/OFF する。
+    //  OFF: 常にメイン信号を検出ソースにする（内部検出 = 通常のコンプ）。
+    //  ON : サイドチェインバスを検出ソースにする。未接続のときは scActive=false となり、
+    //       compressor 側で無音検出にフォールバックする（= 一切コンプが掛からない）。
+    const bool useSidechain = parameters.getRawParameterValue(zc::id::SIDECHAIN.getParamID())->load() > 0.5f;
+    const bool scActive = useSidechain && scBuffer.getNumChannels() > 0;
 
     sanitizeBufferFinite(mainBuffer, numChannels, numSamples);
     if (scActive)
@@ -357,11 +368,13 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // --- コンプ本体 ---
     //  per-sample gain を scratch に取得して後段の波形 slice 集計に使う。
     //  （block-level の minGain を slice に流すと解像度が DAW のブロックサイズに依存してしまう）
-    //  サイドチェインが有効ならそれを検出ソースに、無ければメイン信号を検出ソースに使う。
+    //  検出バッファは SC が実際に有効なときだけ渡す。useSidechain を末尾に渡すことで、SC ON でも
+    //  未接続のときは compressor 側が無音検出にフォールバックする（= コンプ無し）。
     float* gainPerSample = waveformGainScratch.data();
     const float minGain = compressor.processBlock(mainBuffer,
                                                   scActive ? &scBuffer : nullptr,
-                                                  gainPerSample);
+                                                  gainPerSample,
+                                                  useSidechain);
     atomicMinFloat(minGainAccum, minGain);
 
     // 波形表示: 入力ピーク + per-sample gain を slice に流す。

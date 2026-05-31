@@ -21,12 +21,15 @@ export const GlobalDialog: React.FC = () => {
   const [inputValue, setInputValue] = React.useState('');
   const [inputError, setInputError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    if (!options) return;
-    const initial = options.input?.defaultValue ?? '';
-    setInputValue(initial);
+  // options が切り替わったら入力欄を defaultValue で初期化し、エラーをクリアする。
+  //  「props 変化に応じた state 調整」は useEffect ではなく render 中の比較で行うのが React 推奨。
+  //  （useEffect + setState は set-state-in-effect = cascading render を招くアンチパターン）
+  const [prevOptions, setPrevOptions] = React.useState(options);
+  if (options !== prevOptions) {
+    setPrevOptions(options);
+    setInputValue(options?.input?.defaultValue ?? '');
     setInputError(null);
-  }, [options]);
+  }
 
   if (!options) return null;
 

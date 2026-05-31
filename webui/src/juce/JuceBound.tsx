@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Jun Murakami
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { type SxProps, Slider, Checkbox, FormControl, InputLabel, MenuItem, Select, Box, Typography } from '@mui/material';
 // MUI Select の onChange コールバックが受け取るイベントの number 版（型不一致回避のため union で表現）
 type SelectNumberEvent =
@@ -17,33 +17,32 @@ type SliderProps = {
 };
 
 export const JuceBoundSlider: React.FC<SliderProps> = ({ identifier, label, orientation, sx, valueLabelDisplay }) => {
-  const sliderState = getSliderState(identifier);
-  // Hooks は無条件に宣言する必要がある（早期 return の前に置く）。
-  // sliderState が未解決の初期レンダーでも安全な初期値を使い、実体が来たら useEffect で同期する。
-  const [value, setValue] = useState<number>(0);
-  const [properties, setProperties] = useState(sliderState?.properties);
+  // パラメータ ID は不変なので state は 1 回だけ取得。未解決時は null。
+  const sliderState = useMemo(() => getSliderState(identifier) ?? null, [identifier]);
 
-  useEffect(() => {
-    // sliderState がまだ無い場合は何もしない（Hooks 自体は無条件に呼ばれている）
-    if (!sliderState) return;
-    // 初回同期（実体が得られたら最新値/プロパティを反映）
-    setValue(sliderState.getNormalisedValue());
-    setProperties(sliderState.properties);
-    // 変更リスナーを登録して UI を更新
-    const vId = sliderState.valueChangedEvent.addListener(() => setValue(sliderState.getNormalisedValue()));
-    const pId = sliderState.propertiesChangedEvent.addListener(() => setProperties(sliderState.properties));
-    return () => {
-      sliderState.valueChangedEvent.removeListener(vId);
-      sliderState.propertiesChangedEvent.removeListener(pId);
-    };
+  // 外部ストア（APVTS mirror）の購読は useSyncExternalStore に寄せる。
+  //  旧実装（useEffect 内で初回 setState + addListener）は set-state-in-effect 警告対象で、
+  //  tearing / StrictMode 二重実行の懸念もあった。value と properties をそれぞれ購読する。
+  const subscribeValue = useCallback((onChange: () => void) => {
+    if (!sliderState) return () => {};
+    const id = sliderState.valueChangedEvent.addListener(onChange);
+    return () => sliderState.valueChangedEvent.removeListener(id);
   }, [sliderState]);
+  const value = useSyncExternalStore(subscribeValue, () => (sliderState ? sliderState.getNormalisedValue() : 0));
 
-  // ここで安全に早期 return（Hooks 以降なのでルールに抵触しない）
+  const subscribeProps = useCallback((onChange: () => void) => {
+    if (!sliderState) return () => {};
+    const id = sliderState.propertiesChangedEvent.addListener(onChange);
+    return () => sliderState.propertiesChangedEvent.removeListener(id);
+  }, [sliderState]);
+  // mirror の properties は propertiesChanged 時のみ再代入される安定参照なので getSnapshot にそのまま使える。
+  const properties = useSyncExternalStore(subscribeProps, () => sliderState?.properties);
+
   if (!sliderState) return null;
 
   const handleChange = (_: Event, nv: number | number[]) => {
     const n = nv as number;
-    setValue(n);
+    // 値は useSyncExternalStore が valueChangedEvent 経由で反映するので楽観的更新は不要。
     sliderState.setNormalisedValue(n);
   };
 
@@ -85,29 +84,25 @@ type ToggleProps = {
 };
 
 export const JuceBoundToggle: React.FC<ToggleProps> = ({ identifier, label }) => {
-  const toggleState = getToggleState(identifier);
-  // Hooks は早期 return より前に無条件で呼び出す
-  const [checked, setChecked] = useState<boolean>(false);
-  const [properties, setProperties] = useState(toggleState?.properties);
+  const toggleState = useMemo(() => getToggleState(identifier) ?? null, [identifier]);
 
-  useEffect(() => {
-    if (!toggleState) return;
-    // 初回同期
-    setChecked(toggleState.getValue());
-    setProperties(toggleState.properties);
-    // 変更監視
-    const vId = toggleState.valueChangedEvent.addListener(() => setChecked(toggleState.getValue()));
-    const pId = toggleState.propertiesChangedEvent.addListener(() => setProperties(toggleState.properties));
-    return () => {
-      toggleState.valueChangedEvent.removeListener(vId);
-      toggleState.propertiesChangedEvent.removeListener(pId);
-    };
+  const subscribeValue = useCallback((onChange: () => void) => {
+    if (!toggleState) return () => {};
+    const id = toggleState.valueChangedEvent.addListener(onChange);
+    return () => toggleState.valueChangedEvent.removeListener(id);
   }, [toggleState]);
+  const checked = useSyncExternalStore(subscribeValue, () => (toggleState ? toggleState.getValue() : false));
+
+  const subscribeProps = useCallback((onChange: () => void) => {
+    if (!toggleState) return () => {};
+    const id = toggleState.propertiesChangedEvent.addListener(onChange);
+    return () => toggleState.propertiesChangedEvent.removeListener(id);
+  }, [toggleState]);
+  const properties = useSyncExternalStore(subscribeProps, () => toggleState?.properties);
 
   if (!toggleState) return null;
 
   const onChange = (_: React.ChangeEvent<HTMLInputElement>, val: boolean) => {
-    setChecked(val);
     toggleState.setValue(val);
   };
 
@@ -125,31 +120,27 @@ type ComboProps = {
 };
 
 export const JuceBoundCombo: React.FC<ComboProps> = ({ identifier, label }) => {
-  const comboState = getComboBoxState(identifier);
-  // Hooks は早期 return より前に無条件で呼び出す
-  const [index, setIndex] = useState<number>(0);
-  const [properties, setProperties] = useState(comboState?.properties);
+  const comboState = useMemo(() => getComboBoxState(identifier) ?? null, [identifier]);
 
-  useEffect(() => {
-    if (!comboState) return;
-    // 初回同期
-    setIndex(comboState.getChoiceIndex());
-    setProperties(comboState.properties);
-    // 変更監視
-    const vId = comboState.valueChangedEvent.addListener(() => setIndex(comboState.getChoiceIndex()));
-    const pId = comboState.propertiesChangedEvent.addListener(() => setProperties(comboState.properties));
-    return () => {
-      comboState.valueChangedEvent.removeListener(vId);
-      comboState.propertiesChangedEvent.removeListener(pId);
-    };
+  const subscribeValue = useCallback((onChange: () => void) => {
+    if (!comboState) return () => {};
+    const id = comboState.valueChangedEvent.addListener(onChange);
+    return () => comboState.valueChangedEvent.removeListener(id);
   }, [comboState]);
+  const index = useSyncExternalStore(subscribeValue, () => (comboState ? comboState.getChoiceIndex() : 0));
+
+  const subscribeProps = useCallback((onChange: () => void) => {
+    if (!comboState) return () => {};
+    const id = comboState.propertiesChangedEvent.addListener(onChange);
+    return () => comboState.propertiesChangedEvent.removeListener(id);
+  }, [comboState]);
+  const properties = useSyncExternalStore(subscribeProps, () => comboState?.properties);
 
   if (!comboState) return null;
 
   const onChange = (e: SelectNumberEvent) => {
     // union の両辺とも target.value は number なので安全に取り出す
     const i = (e as { target: { value: number } }).target.value;
-    setIndex(i);
     comboState.setChoiceIndex(i);
   };
 

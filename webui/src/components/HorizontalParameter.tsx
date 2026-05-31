@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Jun Murakami
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { Box, Input, Slider, Typography } from '@mui/material';
 import { useJuceSliderValue } from '../hooks/useJuceParam';
 import { useFineAdjustPointer } from '../hooks/useFineAdjustPointer';
@@ -65,8 +65,6 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [inputText, setInputText] = useState('');
-  const valueRef = useRef(value);
-  valueRef.current = value;
 
   // log スキュー時でも frontend-mirror は線形解釈で scaled 値を送る仕様のため、
   //  log 正規化値ではなく scaled 値 → 線形正規化 の経路で渡す必要がある。
@@ -91,6 +89,12 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
   const stepValue = (current: number, fine: boolean, direction: 1 | -1): number =>
     skew === 'log' ? stepValueLog(current, fine, direction) : stepValueLinear(current, fine, direction);
 
+  // wheel リスナーは effect 内で 1 回だけ登録し、最新 value/skew/min/max を Effect Event 経由で読む。
+  //  これにより value 変化のたびに addEventListener を貼り直す必要がなく、依存配列も空にできる。
+  const stepFromCurrent = useEffectEvent((direction: 1 | -1, fine: boolean) => {
+    applyValue(stepValue(value, fine, direction));
+  });
+
   const wheelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = wheelRef.current;
@@ -99,12 +103,11 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
       e.preventDefault();
       const direction: 1 | -1 = -e.deltaY > 0 ? 1 : -1;
       const fine = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
-      applyValue(stepValue(valueRef.current, fine, direction));
+      stepFromCurrent(direction, fine);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel as EventListener);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [min, max, skew, wheelStep, wheelStepFine]);
+  }, []);
 
   // 修飾キー + ポインタ操作：
   //  Ctrl/Cmd + クリック      → defaultValue にリセット
@@ -119,8 +122,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
     },
     onDragStart: () => {
       fineDragStartRef.current = {
-        value: valueRef.current,
-        norm: valueToNorm(valueRef.current, min, max, skew),
+        value: value,
+        norm: valueToNorm(value, min, max, skew),
       };
       sliderState?.sliderDragStarted();
     },
@@ -139,12 +142,12 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
   const inputDragStartRef = useRef<{ value: number; norm: number }>({ value: 0, norm: 0 });
   useNumberInputAdjust(inputElRef, {
     onWheelStep: (direction, fine) => {
-      applyValue(stepValue(valueRef.current, fine, direction));
+      applyValue(stepValue(value, fine, direction));
     },
     onDragStart: () => {
       inputDragStartRef.current = {
-        value: valueRef.current,
-        norm: valueToNorm(valueRef.current, min, max, skew),
+        value: value,
+        norm: valueToNorm(value, min, max, skew),
       };
       sliderState?.sliderDragStarted();
     },

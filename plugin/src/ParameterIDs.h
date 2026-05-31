@@ -14,6 +14,11 @@ namespace zc::id {
     // - OUTPUT_GAIN:   -24..+24 dB  (既定 0)
     // - AUTO_MAKEUP:   bool        (既定 OFF) ON 時は threshold/ratio から自動算出した makeup を OUTPUT_GAIN の代わりに適用。
     //                              makeup_dB = -threshold * (1 - 1/ratio)。UI 側では Output フェーダーを無効表示にする。
+    // - SIDECHAIN:     bool        (既定 OFF) ON 時は外部サイドチェイン入力（バス 1）を検出ソースにする。
+    //                              OFF 時は常にメイン信号を検出ソースにする。ホストのバス有効化挙動
+    //                              （Bitwig + CLAP は未接続でもバスを active にする）に依存しないための明示トグル。
+    //                              UI と DSP を繋ぐため PluginEditor に WebToggleButtonRelay/Attachment が必要
+    //                              （無いと frontend が "unknown to the backend" になりクリックが no-op になる）。
     // - MODE:          0=VCA(Clean) / 1=Opto / 2=FET / 3=Vari-Mu（既定 VCA）
     //                  既存の Threshold/Ratio/Knee/Attack/Release をそのまま使い、モードは
     //                  エンベロープ挙動 + 信号経路の色付け（サチュレーション）を切り替える。
@@ -27,6 +32,7 @@ namespace zc::id {
     const juce::ParameterID RELEASE_MS   {"RELEASE_MS",    1};
     const juce::ParameterID OUTPUT_GAIN  {"OUTPUT_GAIN",   1};
     const juce::ParameterID AUTO_MAKEUP  {"AUTO_MAKEUP",   1};
+    const juce::ParameterID SIDECHAIN    {"SIDECHAIN",     1};
     const juce::ParameterID MODE         {"MODE",          1};
     const juce::ParameterID METERING_MODE{"METERING_MODE", 1};
     const juce::ParameterID DISPLAY_MODE {"DISPLAY_MODE",  1};

@@ -15,15 +15,15 @@ import {
   GainReductionMeterBar,
   LevelMeterBar,
   LoudnessMeterBar,
-  formatDb,
-  formatLkfs,
 } from './components/VUMeter';
+import { formatDb, formatLkfs } from './components/meterFormat';
 import { useHostShortcutForwarding } from './hooks/useHostShortcutForwarding';
 import { useGlobalZoomGuard } from './hooks/useGlobalZoomGuard';
 import { GlobalDialog } from './components/GlobalDialog';
 import LicenseDialog from './components/LicenseDialog';
 import { WebTransportBar } from './components/WebTransportBar';
 import { WebDemoMenu, MENU_WIDE_QUERY, MENU_DRAWER_WIDTH } from './components/WebDemoMenu';
+import LinkIcon from '@mui/icons-material/Link';
 
 const IS_WEB_MODE = import.meta.env.VITE_RUNTIME === 'web';
 import type { MeterUpdateData } from './types';
@@ -120,6 +120,8 @@ function App() {
   const { value: ratioVal } = useJuceSliderValue('RATIO');
   const { value: kneeDbVal } = useJuceSliderValue('KNEE_DB');
   const { value: autoMakeupOn, setValue: setAutoMakeup } = useJuceToggleValue('AUTO_MAKEUP', false);
+  // SIDECHAIN: 外部サイドチェイン検出の ON/OFF（既定 OFF）。ON のときだけ SC バスを検出ソースにする。
+  const { value: sidechainOn, setValue: setSidechain } = useJuceToggleValue('SIDECHAIN', false);
 
   // Auto Makeup 時の自動補償量（ハーフ補償、DSP 側と同じ式）。
   //   makeup_dB = -threshold * (1 - 1/ratio) * 0.5
@@ -189,6 +191,10 @@ function App() {
   useEffect(() => {
     juceBridge.whenReady(() => {
       juceBridge.callNative('system_action', 'ready');
+      // 初期サイズを「設計 CSS px × ratio」に確定（MixCompare 方式）。レイアウト確定後の値を使うため次フレームで送る。
+      requestAnimationFrame(() => {
+        juceBridge.callNative('window_action', 'apply_layout', window.innerWidth, window.innerHeight);
+      });
     });
   }, []);
 
@@ -260,6 +266,12 @@ function App() {
     return () => ro.disconnect();
   }, []);
 
+  // 上部バー（中央エリア上に重ねた Side-Chain / Display Mode トグル）が狭くてラベルが
+  //  入りきらない時は、Side-Chain をアイコンのみ・Display Mode をラベル省略に切り替える。
+  //  中央エリアの実測幅（左半分 + 右半分）で判定するので、window.innerWidth やパディング・DPI に
+  //  依存せず確実に切り替わる（おおよそプラグインウィンドウ幅 560px 相当）。
+  const compactTopBar = (leftHalfSize.width + rightHalfSize.width) <= 320;
+
   // フェーダー/メーターの縦長部分の高さ。ヘッダ36 + hold行18 + ボタン26 + 余白 = 約88 差引
   //  モバイルでは折り返しレイアウトになるので mainSize からの計算は当てにならない → 固定値。
   //  ユーザ要望で、モバイル時はデスクトップ比 2/3 ぶん（140 × 2/3 ≈ 94）に縮めて小画面に収まるように。
@@ -292,6 +304,8 @@ function App() {
   const pendingResize  = useRef<{ w: number; h: number } | null>(null);
   const lastSentSize   = useRef<{ w: number; h: number } | null>(null);
   const resizeInFlight = useRef(false);
+  // resizeBegin（CSS→論理 px 比率確定）の完了 Promise。最初の resizeTo はこれの解決を待つ（MixCompare 方式）。
+  const beginReady = useRef<Promise<unknown> | null>(null);
 
   const pumpResize = () => {
     if (resizeInFlight.current) return;
@@ -310,24 +324,33 @@ function App() {
       pumpResize();
     };
     const safety = window.setTimeout(done, 200); // 完了応答が来なくてもフリーズしない安全策
-    void juceBridge.callNative('window_action', 'resizeTo', s.w, s.h).then(() => {
-      window.clearTimeout(safety);
-      done();
-    });
+    // resizeBegin（比率確定）の完了を待ってから resizeTo を送る（比率確定前のジャンプ競合を防ぐ）。
+    const begin = beginReady.current ?? Promise.resolve();
+    void begin
+      .then(() => juceBridge.callNative('window_action', 'resizeTo', s.w, s.h))
+      .then(() => {
+        window.clearTimeout(safety);
+        done();
+      });
   };
 
   const onDragStart: React.PointerEventHandler<HTMLDivElement> = (e) => {
     dragState.current = { startX: e.clientX, startY: e.clientY, startW: window.innerWidth, startH: window.innerHeight };
     lastSentSize.current = { w: window.innerWidth, h: window.innerHeight };
+    // ドラッグ開始時に CSS px → 論理 px の換算比率を native へ確定させる（順序保証のため完了 Promise を保持）。
+    beginReady.current = juceBridge.callNative('window_action', 'resizeBegin', window.innerWidth, window.innerHeight);
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onDrag: React.PointerEventHandler<HTMLDivElement> = (e) => {
     if (!dragState.current) return;
-    const dx = e.clientX - dragState.current.startX;
-    const dy = e.clientY - dragState.current.startY;
-    // 最小サイズはネイティブ側 (PluginEditor.h kMinWidth/kMinHeight) と同期させる。
-    const w = Math.round(Math.max(485, dragState.current.startW + dx));
-    const h = Math.round(Math.max(320, dragState.current.startH + dy));
+    // ハンドル右下角をカーソル位置(ビューポート座標=CSS px)へ直接アンカーする。
+    //  startW+dx 方式だと掴んだ位置のズレ(grab gap)を恒久的に引きずる（カーソルとハンドルが
+    //  ズレたまま伸縮する）ため、カーソル直アンカーにして角がカーソルへ追従するようにする。
+    //  ハンドルは right:0/bottom:0 でビューポート右下に固定、左上端は (0,0) なので
+    //  clientX/clientY がそのまま左/上端からの目標サイズ(CSS px)になる。
+    //  最小サイズはネイティブ側 (PluginEditor.h kMinWidth/kMinHeight) と同期させる。
+    const w = Math.round(Math.max(485, e.clientX));
+    const h = Math.round(Math.max(320, e.clientY));
     pendingResize.current = { w, h };
     pumpResize();
   };
@@ -555,17 +578,102 @@ function App() {
                   sx={{
                     position: 'absolute',
                     top: 0,
+                    left: 0,
+                    right: 0,
                     mt: isMobile ? 0.5 : -0.5,
                     zIndex: 2,
                     display: 'flex',
                     alignItems: 'center',
+                    justifyContent: 'space-between',
+                    px: 0.5,
                     userSelect: 'none',
                   }}
                 >
-                  <Typography variant='caption' sx={{ fontSize: '0.7rem', lineHeight: 1, mr: 0.5 }}>
-                    Display Mode:
-                  </Typography>
-                  <Tooltip title='Metering (graph + meters) ⇔ Waveform (oscilloscope)' arrow>
+                  {/* 左: Side-Chain トグル（外部サイドチェイン検出の明示スイッチ）。
+                      "Side-Chain:" ラベルは常に表示。トグル本体は通常時 Off/On セグメント、
+                      compactTopBar のときは幅節約のため Link アイコン 1 個のトグルボタンに切り替える
+                      （状態は色 + tooltip で示す）。 */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', userSelect: 'none' }}>
+                    <Typography variant='caption' sx={{ fontSize: '0.7rem', lineHeight: 1, mr: 0.5 }}>
+                      Side-Chain:
+                    </Typography>
+                    <Tooltip title={`Side-Chain: ${sidechainOn ? 'On' : 'Off'} — external sidechain detection`} arrow>
+                      {compactTopBar ? (
+                        <Box
+                          onClick={() => setSidechain(!sidechainOn)}
+                          role='button'
+                          aria-label='sidechain'
+                          aria-pressed={sidechainOn}
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 22,
+                            height: 17,
+                            borderRadius: 1,
+                            border: '1px solid',
+                            borderColor: sidechainOn ? 'primary.main' : 'divider',
+                            backgroundColor: sidechainOn ? 'primary.main' : 'background.paper',
+                            color: sidechainOn ? 'background.paper' : 'text.secondary',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <LinkIcon sx={{ fontSize: '0.9rem' }} />
+                        </Box>
+                      ) : (
+                        <Box
+                          onClick={() => setSidechain(!sidechainOn)}
+                          role='button'
+                          aria-label='sidechain'
+                          sx={{
+                            display: 'inline-flex',
+                            height: 17,
+                            borderRadius: 1,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            overflow: 'hidden',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            fontSize: '0.7rem',
+                            lineHeight: 1,
+                            backgroundColor: 'background.paper',
+                          }}
+                        >
+                          <Box
+                            sx={{
+                              px: 0.75,
+                              display: 'flex',
+                              alignItems: 'center',
+                              backgroundColor: !sidechainOn ? 'primary.main' : 'transparent',
+                              color: !sidechainOn ? 'background.paper' : 'text.secondary',
+                            }}
+                          >
+                            Off
+                          </Box>
+                          <Box
+                            sx={{
+                              px: 0.75,
+                              display: 'flex',
+                              alignItems: 'center',
+                              backgroundColor: sidechainOn ? 'primary.main' : 'transparent',
+                              color: sidechainOn ? 'background.paper' : 'text.secondary',
+                            }}
+                          >
+                            On
+                          </Box>
+                        </Box>
+                      )}
+                    </Tooltip>
+                  </Box>
+
+                  {/* 右: Display Mode（Metering / Waveform）トグル。compactTopBar 時はラベルを省略。 */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', userSelect: 'none' }}>
+                    {!compactTopBar && (
+                      <Typography variant='caption' sx={{ fontSize: '0.7rem', lineHeight: 1, mr: 0.5 }}>
+                        Display Mode:
+                      </Typography>
+                    )}
+                    <Tooltip title='Metering (graph + meters) ⇔ Waveform (oscilloscope)' arrow>
                     <Box
                       onClick={toggleDisplayMode}
                       role='button'
@@ -608,6 +716,7 @@ function App() {
                       </Box>
                     </Box>
                   </Tooltip>
+                  </Box>
                 </Box>
                 {/* 左半分: グラフ or 波形キャンバス + 直下に Auto Makeup トグル。
                     Waveform モードでは leftHalfRef で観測した幅をそのまま WaveformView の幅に使う。 */}

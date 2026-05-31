@@ -136,7 +136,8 @@ namespace {
 
 float Compressor::processBlock(juce::AudioBuffer<float>& buffer,
                                const juce::AudioBuffer<float>* detectionBuffer,
-                               float* gainOut) noexcept
+                               float* gainOut,
+                               bool externalDetectRequested) noexcept
 {
     const int numChannels = buffer.getNumChannels();
     const int numSamples  = buffer.getNumSamples();
@@ -151,6 +152,10 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer,
     const float* detectL = useExternalDetect ? detectionBuffer->getReadPointer(0) : nullptr;
     const float* detectR = useExternalDetect ? detectionBuffer->getReadPointer(detectChannels > 1 ? 1 : 0)
                                              : nullptr;
+
+    // 検出ソースが無いときのフォールバック。externalDetectRequested（外部 SC 検出 ON）なら
+    //  メインに戻さず無音（0）で検出する → SC を有効化したのに未接続なら一切コンプが掛からない。
+    //  OFF のときはメイン信号で検出（= 通常の内部検出コンプ）。
 
     float minGain = 1.0f;
     if (! std::isfinite(envelopeDb)) envelopeDb = 0.0f;
@@ -247,8 +252,8 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer,
             sampleIdx = i;
             float l = ch[i];
             float r = l;
-            const float dL = detectL ? detectL[i] : l;
-            const float dR = detectR ? detectR[i] : r;
+            const float dL = detectL ? detectL[i] : (externalDetectRequested ? 0.0f : l);
+            const float dR = detectR ? detectR[i] : (externalDetectRequested ? 0.0f : r);
             step(l, r, dL, dR);
             ch[i] = l;
         }
@@ -263,8 +268,8 @@ float Compressor::processBlock(juce::AudioBuffer<float>& buffer,
         sampleIdx = i;
         float l = left[i];
         float r = right[i];
-        const float dL = detectL ? detectL[i] : l;
-        const float dR = detectR ? detectR[i] : r;
+        const float dL = detectL ? detectL[i] : (externalDetectRequested ? 0.0f : l);
+        const float dR = detectR ? detectR[i] : (externalDetectRequested ? 0.0f : r);
         step(l, r, dL, dR);
         left[i]  = l;
         right[i] = r;

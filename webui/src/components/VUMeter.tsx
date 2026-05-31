@@ -276,11 +276,4 @@ export const LoudnessMeterBar: React.FC<{ lkfs: number; width?: number; height?:
   );
 };
 
-// ============================
-// ラベル付き dB 表示
-// ============================
-export const formatDb = (db: number): string => (db <= MIN_DB ? '-∞' : Math.max(MIN_DB, Math.min(0, db)).toFixed(1));
-
-// Momentary LKFS 値用の数値表示（-∞ から 0 LKFS）
-export const formatLkfs = (lkfs: number): string =>
-  lkfs <= LOUDNESS_MIN_LKFS ? '-∞' : Math.max(LOUDNESS_MIN_LKFS, Math.min(0, lkfs)).toFixed(1);
+// 数値フォーマッタ（formatDb / formatLkfs）は Fast Refresh 制約により ./meterFormat へ分離。

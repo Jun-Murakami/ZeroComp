@@ -98,6 +98,7 @@ ENV_FILE="${ROOT_DIR}/.env"
 if [[ -f "${ENV_FILE}" ]]; then
     echo -e "${color_gray}Loading environment variables from .env ...${color_reset}"
     while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"       # strip trailing CR (CRLF .env で値末尾に \r が混入し PACE 認証等が壊れるのを防ぐ)
         line="${line## }"          # trim leading
         line="${line%% }"          # trim trailing
         [[ -z "$line" || "$line" == \#* ]] && continue
@@ -231,9 +232,9 @@ echo -e "${color_gray}Output: ${ROOT_DIR}/plugin/ui/public${color_reset}"
 # Step 2: CMake (Xcode) で VST3/AU/Standalone (+ AAX) をビルド
 #============================================
 if [[ ${BUILD_AAX} -eq 1 ]]; then
-    echo_header "Step 2: Building Plugins (VST3/AU/Standalone/AAX)"
+    echo_header "Step 2: Building Plugins (VST3/AU/Standalone/CLAP/AAX)"
 else
-    echo_header "Step 2: Building Plugins (VST3/AU/Standalone)"
+    echo_header "Step 2: Building Plugins (VST3/AU/Standalone/CLAP)"
 fi
 
 # Clean existing artifacts (detect permission issues early)
@@ -257,9 +258,9 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" \
 
 echo_step "Executing build..."
 if [[ ${BUILD_AAX} -eq 1 ]]; then
-    cmake --build "${BUILD_DIR}" --config "${CONFIGURATION}" --target ZeroComp_VST3 ZeroComp_AU ZeroComp_Standalone ZeroComp_AAX
+    cmake --build "${BUILD_DIR}" --config "${CONFIGURATION}" --target ZeroComp_VST3 ZeroComp_AU ZeroComp_Standalone ZeroComp_CLAP ZeroComp_AAX
 else
-    cmake --build "${BUILD_DIR}" --config "${CONFIGURATION}" --target ZeroComp_VST3 ZeroComp_AU ZeroComp_Standalone
+    cmake --build "${BUILD_DIR}" --config "${CONFIGURATION}" --target ZeroComp_VST3 ZeroComp_AU ZeroComp_Standalone ZeroComp_CLAP
 fi
 echo_success "Plugin build completed"
 
@@ -280,6 +281,10 @@ if [[ -f "${ARTIFACTS_DIR}/Standalone/ZeroComp.app/Contents/MacOS/ZeroComp" ]]; 
     echo "  Standalone:"
     lipo -info "${ARTIFACTS_DIR}/Standalone/ZeroComp.app/Contents/MacOS/ZeroComp"
 fi
+if [[ -f "${ARTIFACTS_DIR}/CLAP/ZeroComp.clap/Contents/MacOS/ZeroComp" ]]; then
+    echo "  CLAP:"
+    lipo -info "${ARTIFACTS_DIR}/CLAP/ZeroComp.clap/Contents/MacOS/ZeroComp"
+fi
 if [[ ${BUILD_AAX} -eq 1 ]] && [[ -f "${ARTIFACTS_DIR}/AAX/ZeroComp.aaxplugin/Contents/MacOS/ZeroComp" ]]; then
     echo "  AAX:"
     lipo -info "${ARTIFACTS_DIR}/AAX/ZeroComp.aaxplugin/Contents/MacOS/ZeroComp"
@@ -288,10 +293,12 @@ echo_success "Architecture verification completed"
 SRC_VST3="${ARTIFACTS_DIR}/VST3/ZeroComp.vst3"
 SRC_AU="${ARTIFACTS_DIR}/AU/ZeroComp.component"
 SRC_APP="${ARTIFACTS_DIR}/Standalone/ZeroComp.app"
+SRC_CLAP="${ARTIFACTS_DIR}/CLAP/ZeroComp.clap"
 
 if [[ ! -d "${SRC_VST3}" ]]; then echo_error "VST3 not found: ${SRC_VST3}"; exit 1; fi
 if [[ ! -d "${SRC_AU}" ]]; then echo_error "AU not found: ${SRC_AU}"; exit 1; fi
 if [[ ! -d "${SRC_APP}" ]]; then echo_error "Standalone not found: ${SRC_APP}"; exit 1; fi
+if [[ ! -d "${SRC_CLAP}" ]]; then echo_error "CLAP not found: ${SRC_CLAP}"; exit 1; fi
 
 # AAX check
 if [[ ${BUILD_AAX} -eq 1 ]]; then
@@ -303,11 +310,13 @@ echo_step "Collecting artifacts..."
 DEST_VST3="${OUTPUT_DIR}/ZeroComp.vst3"
 DEST_AU="${OUTPUT_DIR}/ZeroComp.component"
 DEST_APP="${OUTPUT_DIR}/ZeroComp.app"
+DEST_CLAP="${OUTPUT_DIR}/ZeroComp.clap"
 
-rm -rf "${DEST_VST3}" "${DEST_AU}" "${DEST_APP}"
+rm -rf "${DEST_VST3}" "${DEST_AU}" "${DEST_APP}" "${DEST_CLAP}"
 cp -R "${SRC_VST3}" "${DEST_VST3}"
 cp -R "${SRC_AU}" "${DEST_AU}"
 cp -R "${SRC_APP}" "${DEST_APP}"
+cp -R "${SRC_CLAP}" "${DEST_CLAP}"
 
 if [[ ${BUILD_AAX} -eq 1 ]]; then
     DEST_AAX="${OUTPUT_DIR}/ZeroComp.aaxplugin"
@@ -348,6 +357,7 @@ set_unique_bundle_id() {
 set_unique_bundle_id "${DEST_VST3}" "vst3"
 set_unique_bundle_id "${DEST_AU}"   "au"
 set_unique_bundle_id "${DEST_APP}"  "app"
+set_unique_bundle_id "${DEST_CLAP}" "clap"
 if [[ ${BUILD_AAX} -eq 1 ]]; then
     set_unique_bundle_id "${DEST_AAX}" "aax"
 fi
@@ -415,6 +425,10 @@ echo_step "Signing Standalone..."
 sign_bundle "${DEST_APP}"
 echo_success "Standalone signing OK"
 
+echo_step "Signing CLAP..."
+sign_bundle "${DEST_CLAP}"
+echo_success "CLAP signing OK"
+
 if [[ ${BUILD_AAX} -eq 1 ]]; then
     echo_step "Signing AAX..."
     sign_bundle "${DEST_AAX}"
@@ -464,12 +478,23 @@ if [[ ${BUILD_AAX} -eq 1 ]]; then
     [[ -z "${PACE_PASSWORD:-}" ]]              && MISSING_PACE_VARS+=("PACE_PASSWORD")
     [[ -z "${PACE_ORGANIZATION_EFFECTIVE}" ]]  && MISSING_PACE_VARS+=("PACE_ORGANIZATION")
 
+    # PACE 署名が失敗/スキップされると未ラップ AAX が出荷され、Pro Tools に拒否される。
+    # リリースでは致命エラーで停止する。意図的に未署名 dev ビルドを作る場合のみ
+    # ALLOW_UNSIGNED_AAX=1 で明示的に回避できる。
     if [[ -z "${FOUND_WRAPTOOL}" ]]; then
-        echo -e "${color_yellow}wraptool not found. Skipping AAX PACE signing.${color_reset}"
-        echo -e "${color_gray}Please set WRAPTOOL_PATH environment variable.${color_reset}"
+        if [[ "${ALLOW_UNSIGNED_AAX:-0}" == "1" ]]; then
+            echo -e "${color_yellow}wraptool not found. Skipping AAX PACE signing (ALLOW_UNSIGNED_AAX=1).${color_reset}"
+        else
+            echo_error "wraptool not found. Cannot PACE-sign AAX (Pro Tools will reject an unsigned AAX). Set WRAPTOOL_PATH, or set ALLOW_UNSIGNED_AAX=1 for an intentional unsigned dev build."
+            exit 1
+        fi
     elif (( ${#MISSING_PACE_VARS[@]} > 0 )); then
-        echo -e "${color_yellow}Missing PACE credentials: ${MISSING_PACE_VARS[*]}. Skipping AAX PACE signing.${color_reset}"
-        echo -e "${color_gray}Set them in .env (project root) or export them in your shell.${color_reset}"
+        if [[ "${ALLOW_UNSIGNED_AAX:-0}" == "1" ]]; then
+            echo -e "${color_yellow}Missing PACE credentials: ${MISSING_PACE_VARS[*]}. Skipping AAX PACE signing (ALLOW_UNSIGNED_AAX=1).${color_reset}"
+        else
+            echo_error "Missing PACE credentials: ${MISSING_PACE_VARS[*]}. Set them in .env (project root) or export them, or set ALLOW_UNSIGNED_AAX=1 for an intentional unsigned dev build."
+            exit 1
+        fi
     else
         echo_step "Using wraptool to apply iLok signing to AAX..."
 
@@ -490,9 +515,15 @@ if [[ ${BUILD_AAX} -eq 1 ]]; then
         # パスワードをログに出さないよう、コマンドダンプは抑制する
         echo -e "${color_gray}wraptool command: ${FOUND_WRAPTOOL} sign --verbose --account ${PACE_USERNAME} --password *** --wcguid ${PACE_ORGANIZATION_EFFECTIVE} --signid ${CODESIGN_IDENTITY} --dsigharden --dsig1-compat on --in ${DEST_AAX} --out ${DEST_AAX}${color_reset}"
         if ! "${FOUND_WRAPTOOL}" "${WRAP_ARGS[@]}"; then
-            echo -e "${color_yellow}Warning: AAX PACE signing failed (continuing with unsigned version).${color_reset}"
+            echo_error "AAX PACE signing failed. Pro Tools will reject an unsigned AAX. Check PACE account/password/WCGUID (note: a CRLF .env can corrupt these values with a trailing \\r)."
+            [[ "${ALLOW_UNSIGNED_AAX:-0}" == "1" ]] || exit 1
+            echo -e "${color_yellow}Continuing with unsigned AAX (ALLOW_UNSIGNED_AAX=1).${color_reset}"
+        elif [[ ! -e "${DEST_AAX}/Contents/__Pace_Eden.bundle" ]]; then
+            echo_error "wraptool returned success but __Pace_Eden.bundle is missing — the AAX is NOT PACE-wrapped and Pro Tools will reject it."
+            [[ "${ALLOW_UNSIGNED_AAX:-0}" == "1" ]] || exit 1
+            echo -e "${color_yellow}Continuing with unsigned AAX (ALLOW_UNSIGNED_AAX=1).${color_reset}"
         else
-            echo_success "AAX PACE signing completed"
+            echo_success "AAX PACE signing completed (PACE Eden wrap verified)"
         fi
     fi
 fi
@@ -520,7 +551,7 @@ fi
 # 英語README（Windows版と同じ体裁）
 AAX_SECTION_EN=""
 if [[ ${BUILD_AAX} -eq 1 ]]; then
-    AAX_SECTION_EN="4. For AAX Plugin (Pro Tools):
+    AAX_SECTION_EN="6. For AAX Plugin (Pro Tools):
    Copy the entire ZeroComp.aaxplugin folder to the following location:
    /Library/Application Support/Avid/Audio/Plug-Ins/
 
@@ -553,20 +584,24 @@ Installation Steps
    Copy ZeroComp.app to any preferred location, for example:
    /Applications/ or your Desktop.
 
-${AAX_SECTION_EN}5. If macOS shows security warnings:
+5. For CLAP Plugin:
+   Copy the entire ZeroComp.clap folder to the following location:
+   ~/Library/Audio/Plug-Ins/CLAP/
+
+${AAX_SECTION_EN}7. If macOS shows security warnings:
    Right-click the plugin and select "Open"
    Or go to System Preferences > Security & Privacy > General
    and click "Open Anyway"
 
-6. Launch your DAW and rescan for plugins.
+8. Launch your DAW and rescan for plugins.
 EOF
 
 # フォーマットリストを構築
 if [[ ${BUILD_AAX} -eq 1 ]]; then
-    FORMATS='["VST3", "AU", "Standalone", "AAX"]'
+    FORMATS='["VST3", "AU", "Standalone", "CLAP", "AAX"]'
     AAX_SIGNING='"unsigned_developer"'
 else
-    FORMATS='["VST3", "AU", "Standalone"]'
+    FORMATS='["VST3", "AU", "Standalone", "CLAP"]'
     AAX_SIGNING='"N/A"'
 fi
 
@@ -638,6 +673,21 @@ pkgbuild \
     "${PKG_APP}"
 echo_success "Standalone PKG creation completed"
 
+# CLAP
+echo_step "Creating CLAP component PKG..."
+PKGROOT_CLAP="${PKG_WORK_DIR}/root_clap"
+rm -rf "${PKGROOT_CLAP}" && mkdir -p "${PKGROOT_CLAP}/Library/Audio/Plug-Ins/CLAP"
+cp -R "${DEST_CLAP}" "${PKGROOT_CLAP}/Library/Audio/Plug-Ins/CLAP/"
+PKG_CLAP="${PKG_WORK_DIR}/ZeroComp_CLAP.pkg"
+pkgbuild \
+    --root "${PKGROOT_CLAP}" \
+    --identifier "${PKG_ID_BASE}.clap" \
+    --version "${VERSION}" \
+    --install-location "/" \
+    --ownership recommended \
+    "${PKG_CLAP}"
+echo_success "CLAP PKG creation completed"
+
 # AAX (only if exists)
 PKG_AAX=""
 if [[ ${BUILD_AAX} -eq 1 ]]; then
@@ -687,27 +737,33 @@ fi
     echo "    <line choice=\"choice_vst3\"/>"
     echo "    <line choice=\"choice_au\"/>"
     echo "    <line choice=\"choice_app\"/>"
+    echo "    <line choice=\"choice_clap\"/>"
     if [[ ${BUILD_AAX} -eq 1 ]]; then
         echo "    <line choice=\"choice_aax\"/>"
     fi
     echo "  </choices-outline>"
-    echo "  <choice id=\"choice_vst3\" title=\"VST3 Plugin\" enabled=\"true\" selected=\"true\">"
+    # NOTE: selected/enabled は選択変化のたびに再評価される JS 式のため定数 "true" だと毎回 ON へ戻る。初期状態のみ指定する start_selected/start_enabled を使う。
+    echo "  <choice id=\"choice_vst3\" title=\"VST3 Plugin\" start_enabled=\"true\" start_selected=\"true\">"
     echo "    <pkg-ref id=\"${PKG_ID_BASE}.vst3\"/>"
     echo "  </choice>"
-    echo "  <choice id=\"choice_au\" title=\"Audio Unit (AU)\" enabled=\"true\" selected=\"true\">"
+    echo "  <choice id=\"choice_au\" title=\"Audio Unit (AU)\" start_enabled=\"true\" start_selected=\"true\">"
     echo "    <pkg-ref id=\"${PKG_ID_BASE}.au\"/>"
     echo "  </choice>"
-    echo "  <choice id=\"choice_app\" title=\"Standalone Application\" enabled=\"true\" selected=\"true\">"
+    echo "  <choice id=\"choice_app\" title=\"Standalone Application\" start_enabled=\"true\" start_selected=\"true\">"
     echo "    <pkg-ref id=\"${PKG_ID_BASE}.app\"/>"
     echo "  </choice>"
+    echo "  <choice id=\"choice_clap\" title=\"CLAP Plugin\" start_enabled=\"true\" start_selected=\"true\">"
+    echo "    <pkg-ref id=\"${PKG_ID_BASE}.clap\"/>"
+    echo "  </choice>"
     if [[ ${BUILD_AAX} -eq 1 ]]; then
-        echo "  <choice id=\"choice_aax\" title=\"AAX (Pro Tools)\" enabled=\"true\" selected=\"true\">"
+        echo "  <choice id=\"choice_aax\" title=\"AAX (Pro Tools)\" start_enabled=\"true\" start_selected=\"true\">"
         echo "    <pkg-ref id=\"${PKG_ID_BASE}.aax\"/>"
         echo "  </choice>"
     fi
     echo "  <pkg-ref id=\"${PKG_ID_BASE}.vst3\">ZeroComp_VST3.pkg</pkg-ref>"
     echo "  <pkg-ref id=\"${PKG_ID_BASE}.au\">ZeroComp_AU.pkg</pkg-ref>"
     echo "  <pkg-ref id=\"${PKG_ID_BASE}.app\">ZeroComp_Standalone.pkg</pkg-ref>"
+    echo "  <pkg-ref id=\"${PKG_ID_BASE}.clap\">ZeroComp_CLAP.pkg</pkg-ref>"
     if [[ ${BUILD_AAX} -eq 1 ]]; then
         echo "  <pkg-ref id=\"${PKG_ID_BASE}.aax\">ZeroComp_AAX.pkg</pkg-ref>"
     fi
@@ -783,9 +839,9 @@ echo_success "PKG stapling completed"
 echo_header "Step 8: Creating ZIP (optional)"
 
 if [[ ${BUILD_AAX} -eq 1 ]]; then
-    ZIP_NAME="ZeroComp_${VERSION}_macOS_VST3_AU_AAX_Standalone.zip"
+    ZIP_NAME="ZeroComp_${VERSION}_macOS_VST3_AU_AAX_CLAP_Standalone.zip"
 else
-    ZIP_NAME="ZeroComp_${VERSION}_macOS_VST3_AU_Standalone.zip"
+    ZIP_NAME="ZeroComp_${VERSION}_macOS_VST3_AU_CLAP_Standalone.zip"
 fi
 ZIP_PATH="${OUTPUT_DIR}/../${ZIP_NAME}"
 
@@ -803,6 +859,7 @@ echo_step "Creating ZIP..."
             "$(basename "${DEST_VST3}")" \
             "$(basename "${DEST_AU}")" \
             "$(basename "${DEST_APP}")" \
+            "$(basename "${DEST_CLAP}")" \
             "$(basename "${DEST_AAX}")" \
             LICENSE.txt ReadMe.txt version.json >/dev/null
     else
@@ -810,6 +867,7 @@ echo_step "Creating ZIP..."
             "$(basename "${DEST_VST3}")" \
             "$(basename "${DEST_AU}")" \
             "$(basename "${DEST_APP}")" \
+            "$(basename "${DEST_CLAP}")" \
             LICENSE.txt ReadMe.txt version.json >/dev/null
     fi
 )
@@ -827,6 +885,7 @@ echo -e "${color_cyan}The package includes (component choices):${color_reset}"
 echo -e "${color_green}[✓] VST3 (固定先: /Library/Audio/Plug-Ins/VST3)${color_reset}"
 echo -e "${color_green}[✓] AU (固定先: /Library/Audio/Plug-Ins/Components)${color_reset}"
 echo -e "${color_green}[✓] Standalone (既定: /Applications、場所変更可)${color_reset}"
+echo -e "${color_green}[✓] CLAP (固定先: /Library/Audio/Plug-Ins/CLAP)${color_reset}"
 if [[ ${BUILD_AAX} -eq 1 ]]; then
     echo -e "${color_green}[✓] AAX (固定先: /Library/Application Support/Avid/Audio/Plug-Ins)${color_reset}"
 fi
