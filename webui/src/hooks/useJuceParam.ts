@@ -54,13 +54,21 @@ export function useJuceSliderValue(parameterId: string): {
   const getSnapshot = useCallback(() => (state ? state.getScaledValue() : 0), [state]);
   const value = useSyncExternalStore(subscribe, getSnapshot);
 
-  const setNormalised = useCallback((t: number) => state?.setNormalisedValue(t), [state]);
+  const setNormalised = useCallback(
+    (t: number) => {
+      if (!state) return;
+      state.setNormalisedValue(t);
+      state.valueChangedEvent.callListeners(undefined);
+    },
+    [state],
+  );
   const setScaled = useCallback(
     (v: number, min: number, max: number) => {
       if (!state) return;
       const clamped = Math.max(min, Math.min(max, v));
       const norm = (clamped - min) / (max - min);
       state.setNormalisedValue(Math.max(0, Math.min(1, norm)));
+      state.valueChangedEvent.callListeners(undefined);
     },
     [state],
   );
@@ -90,7 +98,14 @@ export function useJuceToggleValue(parameterId: string, defaultValue = false): {
   const getSnapshot = useCallback(() => (state ? state.getValue() : defaultValue), [state, defaultValue]);
   const value = useSyncExternalStore(subscribe, getSnapshot);
 
-  const setValue = useCallback((v: boolean) => state?.setValue(v), [state]);
+  const setValue = useCallback(
+    (v: boolean) => {
+      if (!state) return;
+      state.setValue(v);
+      state.valueChangedEvent.callListeners(undefined);
+    },
+    [state],
+  );
 
   return { value, state, setValue };
 }
@@ -116,7 +131,14 @@ export function useJuceComboBoxIndex(parameterId: string): {
   const getSnapshot = useCallback(() => (state ? state.getChoiceIndex() : 0), [state]);
   const index = useSyncExternalStore(subscribe, getSnapshot);
 
-  const setIndex = useCallback((i: number) => state?.setChoiceIndex(i), [state]);
+  const setIndex = useCallback(
+    (i: number) => {
+      if (!state) return;
+      state.setChoiceIndex(i);
+      state.valueChangedEvent.callListeners(undefined);
+    },
+    [state],
+  );
 
   return { index, state, setIndex };
 }

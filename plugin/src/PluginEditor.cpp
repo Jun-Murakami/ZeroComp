@@ -273,8 +273,10 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
                               if (!initialLayoutApplied)
                               {
                                   initialLayoutApplied = true;
-                                  setSize(juce::roundToInt(designTargetW * webResizeRatioW),
-                                          juce::roundToInt(designTargetH * webResizeRatioH));
+                                  // 保存サイズから復元した場合は論理 px で既に正しいので上書きしない（二重 ratio 防止）。
+                                  if (!restoredFromSavedSize)
+                                      setSize(juce::roundToInt(designTargetW * webResizeRatioW),
+                                              juce::roundToInt(designTargetH * webResizeRatioH));
                               }
                             #endif
                               completion(juce::var{ true });
@@ -282,6 +284,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
                           }
                           if (action == "resizeTo" && args.size() >= 3)
                           {
+                              lastHandleResizeMs = juce::Time::getMillisecondCounter();
                               // args は CSS px。CSS(設計)空間でクランプ → 固定比率を掛けて論理 px へ。
                               const int cssW = clampW(juce::roundToInt((double) args[1]));
                               const int cssH = clampH(juce::roundToInt((double) args[2]));
@@ -292,6 +295,7 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
                           }
                           if (action == "resizeBy" && args.size() >= 3)
                           {
+                              lastHandleResizeMs = juce::Time::getMillisecondCounter();
                               const int dw = juce::roundToInt((double) args[1]);
                               const int dh = juce::roundToInt((double) args[2]);
                               setSize(clampW(getWidth() + dw), clampH(getHeight() + dh));
@@ -324,11 +328,21 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
 
     addAndMakeVisible(webView);
 
-    // 初期サイズ
-    setSize(720, 460);
-    // 設計サイズ（CSS px 相当）を控える。apply_layout 初回に × ratio して論理 px へ直す。
-    designTargetW = getWidth();
-    designTargetH = getHeight();
+    // 編集サイズの永続化。ホストのウィンドウサイズ記憶はフォーマット/ホスト依存で不安定
+    //  （VST3 on Bitwig、Cubase Mac、Pro Tools、Logic、Linux 等で復元されない/丸められる）。
+    //  そこで TinyVU と同様に APVTS state へ editorWidth/editorHeight を自前保存し、
+    //  ここで強制復元してホスト・フォーマット非依存にする。保存値は論理 px。
+    const auto apvtsState = audioProcessor.getState().state;
+    restoredFromSavedSize = apvtsState.hasProperty("editorWidth") && apvtsState.hasProperty("editorHeight");
+    const int savedW = static_cast<int>(apvtsState.getProperty("editorWidth",  720));
+    const int savedH = static_cast<int>(apvtsState.getProperty("editorHeight", 460));
+    const int restoreW = juce::jlimit(kMinWidth,  kMaxWidth,  savedW);
+    const int restoreH = juce::jlimit(kMinHeight, kMaxHeight, savedH);
+
+    // 設計サイズ（CSS px 相当）。apply_layout 初回に × ratio して論理 px へ直す（保存復元時は上書きしない）。
+    designTargetW = 720;
+    designTargetH = 460;
+    setSize(restoreW, restoreH);
 
     // リサイズ可能に（プラグイン/スタンドアロン共通）
     //  - OS ウィンドウ四辺 / ResizableCornerComponent / WebUI オーバーレイ
@@ -361,16 +375,14 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
     else
         webView.goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
 
-    // 一部ホスト（Pro Tools AAX など）はコンストラクタ中の setSize を無視して
-    //  ホスト側の保存サイズで最初の resized() を呼ぶことがあり、結果として
-    //  kMinWidth/kMinHeight を割った状態で開いてレイアウトが崩れる。
-    //  次のメッセージループで最小値を割っていたら初期サイズを強制する。
+    // 一部ホスト（Pro Tools AAX, Cubase など）はコンストラクタ中の setSize を無視したり、
+    //  独自保存サイズで最初の resized() を呼ぶため、次のメッセージループで復元サイズへ強制復帰させる。
     juce::Component::SafePointer<ZeroCompAudioProcessorEditor> safeSelf { this };
-    juce::MessageManager::callAsync([safeSelf]()
+    juce::MessageManager::callAsync([safeSelf, restoreW, restoreH]()
     {
         if (safeSelf == nullptr) return;
-        if (safeSelf->getWidth() < kMinWidth || safeSelf->getHeight() < kMinHeight)
-            safeSelf->setSize(720, 460);
+        if (safeSelf->getWidth() != restoreW || safeSelf->getHeight() != restoreH)
+            safeSelf->setSize(restoreW, restoreH);
     });
 
     // 60Hz。メーター / 波形 / DPI ポーリングの駆動源。
@@ -415,6 +427,12 @@ void ZeroCompAudioProcessorEditor::resized()
         resizer->setBounds(getWidth() - gripperSize, getHeight() - gripperSize, gripperSize, gripperSize);
         resizer->toFront(true);
     }
+
+    // 編集サイズを APVTS state に保存し、次回オープン時にホスト保存値ではなくこの値で復元する。
+    //  property 名は parameter ID と衝突しないため APVTS listener には影響しない。論理 px で保存。
+    auto state = audioProcessor.getState().state;
+    state.setProperty("editorWidth",  getWidth(),  nullptr);
+    state.setProperty("editorHeight", getHeight(), nullptr);
 
 #if JUCE_LINUX || JUCE_BSD
     // ホスト主導の resized()（= guiSetSize/onSize の echo）が着地したら保留 resizeTo を確定。
@@ -564,6 +582,13 @@ void ZeroCompAudioProcessorEditor::timerCallback()
 
     if (isShuttingDown.load(std::memory_order_acquire)) return;
     if (! webViewLifetimeGuard.isConstructed()) return;
+
+    // ハンドルリサイズ中（直近に resizeTo を受けた）は、meter/waveform の
+    // ネイティブ→JS 送出を一時停止する。これらは毎フレーム JSON シリアライズ +
+    // evaluateJavascript でメッセージスレッドと WebView の JS スレッド双方を占有するため、
+    // 送り続けると JS→ネイティブの resize メッセージがキューで待たされる。
+    if (juce::Time::getMillisecondCounter() - lastHandleResizeMs < kResizeQuietMs)
+        return;
 
 #if JUCE_LINUX || JUCE_BSD
     // リサイズ落ち着き後の強制再同期（2 tick に分割した 1px ジグル）。editor が既に最終サイズだと

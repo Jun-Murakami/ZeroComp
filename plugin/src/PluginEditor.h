@@ -75,6 +75,12 @@ private:
     std::unique_ptr<juce::ResizableCornerComponent> resizer;
     juce::ComponentBoundsConstrainer resizerConstraints;
 
+    // WebView 内のリサイズハンドルからの resizeTo を最後に処理した時刻（ms）。
+    //  直近 kResizeQuietMs 以内は 60Hz の meter/waveform 送出を止め、
+    //  メッセージスレッド／JS スレッドをリサイズの往復処理に明け渡す。
+    juce::uint32 lastHandleResizeMs = 0;
+    static constexpr juce::uint32 kResizeQuietMs = 160;
+
     // --- Linux 限定のウィンドウ制御（[[linux-dpi-resize-scaling]] と同方針）---
     //  Bitwig 等はホスト枠ドラッグをプラグインへ転送しないため、Linux では枠リサイズを無効化し
     //  （setResizable(false)）、自前ハンドル（window_action.resizeTo→setSize→host request_resize）
@@ -97,6 +103,9 @@ private:
     double webResizeRatioW { 1.0 };
     double webResizeRatioH { 1.0 };
     bool   initialLayoutApplied { false };
+    // APVTS state の保存サイズ（editorWidth/editorHeight）から復元したか。
+    //  復元した場合、apply_layout の初回 ×ratio リサイズで保存値（論理px）を上書きしない（二重適用防止）。
+    bool   restoredFromSavedSize { false };
     int    designTargetW { 720 };
     int    designTargetH { 460 };
 

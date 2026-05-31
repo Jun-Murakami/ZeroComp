@@ -5,8 +5,12 @@
  * Web 互換実装。JUCE WebView が無い環境でも同じインターフェースで動作する。
  */
 
-type ListenerFn = () => void;
+type ListenerFn = (payload?: unknown) => void;
 
+// juce-framework-frontend-mirror の ListenerList と API 互換にしておく。
+//  本家は addListener / removeListener / callListeners(payload) を持つため、
+//  useJuceParam 側が DAW・Web どちらでも同じ呼び方（callListeners）で済む。
+//  callListeners を欠くと Web 経路で set のたびに TypeError が出てドラッグが死ぬ。
 class SimpleEventEmitter
 {
   private listeners = new Map<number, ListenerFn>();
@@ -21,7 +25,10 @@ class SimpleEventEmitter
 
   removeListener(id: number): void { this.listeners.delete(id); }
 
-  emit(): void { this.listeners.forEach((fn) => fn()); }
+  callListeners(payload?: unknown): void { this.listeners.forEach((fn) => fn(payload)); }
+
+  /** 内部用エイリアス（setNormalisedValue などから呼ぶ） */
+  emit(): void { this.callListeners(); }
 }
 
 export interface WebSliderStateOptions
