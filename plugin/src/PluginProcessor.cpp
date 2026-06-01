@@ -424,6 +424,7 @@ bool ZeroCompAudioProcessor::hasEditor() const { return true; }
 
 juce::AudioProcessorEditor* ZeroCompAudioProcessor::createEditor()
 {
+    zc::applyCachedWebViewScaleCorrection();
     return new ZeroCompAudioProcessorEditor(*this);
 }
 

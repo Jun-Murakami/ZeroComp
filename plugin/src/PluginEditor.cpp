@@ -135,6 +135,53 @@ static void queryWindowDpi(HWND hwnd, int& outDpi, double& outScale)
 
 } // namespace
 
+//==============================================================================
+// Linux WebView スケール補正のディスクキャッシュ（全プラグイン共有）
+//==============================================================================
+//  Linux の WebView(out-of-process WebKit) は環境によって JUCE 親窓の何倍もの backing を描く
+//  （GNOME 分数スケール下では 2倍に膨れ中身がはみ出す／KDE 等では等倍で問題なし）。補正に必要な
+//  global-scale は「実測」しないと分からない（apply_layout で測る）が、適用はホストが窓をサイズ決定
+//  する前＝ createEditor で行う必要がある（後から setGlobalScaleFactor すると editor の論理サイズが
+//  リスケールして中身が拡大してしまう）。そこで measured 値をディスクへキャッシュし、次回オープン時に
+//  早期適用する。未測定（=ファイル無し）の既定は補正なし(=1.0)なので、問題の無い環境は一切変えない。
+namespace zc {
+
+static juce::File webViewScaleCacheFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("JunMurakami").getChildFile("webview_scale_correction.cfg");
+}
+
+void applyCachedWebViewScaleCorrection()
+{
+   #if JUCE_LINUX || JUCE_BSD
+    const auto f = webViewScaleCacheFile();
+    if (! f.existsAsFile())
+        return; // 未測定環境は何もしない（= ロールバック状態と等価）
+
+    const double g = f.loadFileAsString().trim().getDoubleValue();
+    if (g > 0.0 && std::abs(g - (double) juce::Desktop::getInstance().getGlobalScaleFactor()) > 0.001)
+        juce::Desktop::getInstance().setGlobalScaleFactor((float) g);
+   #endif
+}
+
+void cacheWebViewScaleCorrection([[maybe_unused]] double globalScale)
+{
+   #if JUCE_LINUX || JUCE_BSD
+    if (globalScale <= 0.0)
+        return;
+    const auto f = webViewScaleCacheFile();
+    const double existing = f.existsAsFile() ? f.loadFileAsString().trim().getDoubleValue() : -1.0;
+    if (std::abs(existing - globalScale) > 0.001)
+    {
+        f.getParentDirectory().createDirectory();
+        f.replaceWithText(juce::String(globalScale, 6));
+    }
+   #endif
+}
+
+} // namespace zc
+
 // WebView2/Chromium の起動前に追加のコマンドライン引数を渡すためのヘルパー。
 //  環境変数 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS に `--force-device-scale-factor=1`
 //  を注入し、WebView2 が独自に DPI スケーリングを適用するのを抑止する。
@@ -262,21 +309,30 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
                               webResizeRatioW = (cssW > 0.0) ? static_cast<double>(getWidth())  / cssW : 1.0;
                               webResizeRatioH = (cssH > 0.0) ? static_cast<double>(getHeight()) / cssH : 1.0;
                             #if JUCE_LINUX || JUCE_BSD
-                              // constrainer の min/max も ratio 換算で論理 px に合わせる。VST3 は onSize→
-                              //  setBoundsConstrained で constrainer を適用するため、論理 px のままの min が
-                              //  apply_layout の目標(設計CSS×ratio)を上回るとクランプされ、CLAP と違って中身が
-                              //  はみ出す。CLAP は editor->setBounds で constrainer 非適用なので元から無害。
-                              resizerConstraints.setSizeLimits(juce::roundToInt(kMinWidth  * webResizeRatioW),
-                                                               juce::roundToInt(kMinHeight * webResizeRatioH),
-                                                               juce::roundToInt(kMaxWidth  * webResizeRatioW),
-                                                               juce::roundToInt(kMaxHeight * webResizeRatioH));
-                              if (!initialLayoutApplied)
+                              webResizeRatioW = 1.0;
+                              webResizeRatioH = 1.0;
+                              resizerConstraints.setSizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+                              initialLayoutApplied = true;
+
+                              const double dpr = (args.size() >= 4) ? static_cast<double>(args[3]) : 0.0;
+                              if (auto* pp = getPeer())
                               {
-                                  initialLayoutApplied = true;
-                                  // 保存サイズから復元した場合は論理 px で既に正しいので上書きしない（二重 ratio 防止）。
-                                  if (!restoredFromSavedSize)
-                                      setSize(juce::roundToInt(designTargetW * webResizeRatioW),
-                                              juce::roundToInt(designTargetH * webResizeRatioH));
+                                  const double peerScale = pp->getPlatformScaleFactor();
+                                  if (dpr > 0.0 && cssW > 0.0 && peerScale > 0.0 && getWidth() > 0)
+                                  {
+                                      const double F    = (cssW * dpr) / ((double) getWidth() * peerScale);
+                                      const double curG = (double) juce::Desktop::getInstance().getGlobalScaleFactor();
+                                      const double newG = curG / F;
+                                      if (std::abs(F - 1.0) > 0.01)
+                                      {
+                                          zc::cacheWebViewScaleCorrection(newG);
+                                          const int targetW = getWidth();
+                                          const int targetH = getHeight();
+                                          const juce::ScopedValueSetter<bool> selfDriven(resizeSelfDriven, true);
+                                          juce::Desktop::getInstance().setGlobalScaleFactor((float) newG);
+                                          setSize(targetW, targetH);
+                                      }
+                                  }
                               }
                             #endif
                               completion(juce::var{ true });
