@@ -1,0 +1,37 @@
+diff --git a/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.cpp b/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.cpp
+index e8c1cfc9f0..7eba5eef29 100644
+--- a/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.cpp
++++ b/modules/juce_audio_plugin_client/juce_audio_plugin_client_LV2.cpp
+@@ -1598,8 +1598,13 @@ public:
+         if (editor == nullptr)
+             return 0;
+ 
+-        const auto logicalBounds = plugin->getScaleManager().convertFromHostBounds ({ width, height }).toNearestIntEdges();
+-        editor->setBoundsConstrained (logicalBounds.withZeroOrigin());
++        // ホスト指定サイズ(物理px)を editor のローカル座標へ。convertFromHostBounds は peerScale のみを
++        //  割り戻して「wrapper ローカル」を返すが、editor が AffineTransform(applyDisplayScale の
++        //  webViewDpr/peerScale)を持つ場合その逆変換が抜け、editor を過大(=wrapper サイズ)に setBounds して
++        //  しまう（KDE で transform=1.5 のとき host 588→editor 588→transform で 882…と膨張する不具合）。
++        //  VST3/CLAP wrapper と同様に editor->getLocalArea で transform を逆適用し editor-local へ直す。
++        const auto wrapperBounds = plugin->getScaleManager().convertFromHostBounds ({ width, height }).toNearestIntEdges();
++        editor->setBoundsConstrained (editor->getLocalArea (this, wrapperBounds).withZeroOrigin());
+ 
+         const auto bounds = getSizeToContainChild();
+         setSize (bounds.getWidth(), bounds.getHeight());
+diff --git a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+index 46d5d82819..e2e1b0134f 100644
+--- a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
++++ b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+@@ -625,7 +625,11 @@ private:
+         if (responder == nullptr)
+             return;
+ 
+-        const auto object = JSON::fromString (String (buffer.getData(), lengthsBuffer.getJsonLength()));
++        // MixCompare patch: the channel carries UTF-8 (JSON::toString defaults to Encoding::utf8 and
++        // sendCommand writes json.toRawUTF8()), but String(const char*, size_t) decodes as ASCII/Latin-1
++        // (CharPointer_ASCII), corrupting any non-ASCII payload (file names, error text, JS<->C++ args).
++        // Decode as UTF-8 by byte length instead so multibyte characters round-trip intact.
++        const auto object = JSON::fromString (String::fromUTF8 (buffer.getData(), (int) lengthsBuffer.getJsonLength()));
+ 
+         if (object.isVoid())
+             return;

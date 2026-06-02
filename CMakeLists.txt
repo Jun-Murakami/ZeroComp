@@ -26,6 +26,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # JUCEをサブモジュールから追加
+# JUCE submodule への修正パッチ（Linux WebView 非ASCII文字化け / LV2 ホスト窓サイズ補正）を add_subdirectory の前に適用
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyJucePatch.cmake)
 add_subdirectory(JUCE)
 
 # clap-juce-extensions（CLAP ターゲットを Windows / macOS / Linux 全てで生成）
