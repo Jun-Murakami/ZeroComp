@@ -135,53 +135,6 @@ static void queryWindowDpi(HWND hwnd, int& outDpi, double& outScale)
 
 } // namespace
 
-//==============================================================================
-// Linux WebView スケール補正のディスクキャッシュ（全プラグイン共有）
-//==============================================================================
-//  Linux の WebView(out-of-process WebKit) は環境によって JUCE 親窓の何倍もの backing を描く
-//  （GNOME 分数スケール下では 2倍に膨れ中身がはみ出す／KDE 等では等倍で問題なし）。補正に必要な
-//  global-scale は「実測」しないと分からない（apply_layout で測る）が、適用はホストが窓をサイズ決定
-//  する前＝ createEditor で行う必要がある（後から setGlobalScaleFactor すると editor の論理サイズが
-//  リスケールして中身が拡大してしまう）。そこで measured 値をディスクへキャッシュし、次回オープン時に
-//  早期適用する。未測定（=ファイル無し）の既定は補正なし(=1.0)なので、問題の無い環境は一切変えない。
-namespace zc {
-
-static juce::File webViewScaleCacheFile()
-{
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("JunMurakami").getChildFile("webview_scale_correction.cfg");
-}
-
-void applyCachedWebViewScaleCorrection()
-{
-   #if JUCE_LINUX || JUCE_BSD
-    const auto f = webViewScaleCacheFile();
-    if (! f.existsAsFile())
-        return; // 未測定環境は何もしない（= ロールバック状態と等価）
-
-    const double g = f.loadFileAsString().trim().getDoubleValue();
-    if (g > 0.0 && std::abs(g - (double) juce::Desktop::getInstance().getGlobalScaleFactor()) > 0.001)
-        juce::Desktop::getInstance().setGlobalScaleFactor((float) g);
-   #endif
-}
-
-void cacheWebViewScaleCorrection([[maybe_unused]] double globalScale)
-{
-   #if JUCE_LINUX || JUCE_BSD
-    if (globalScale <= 0.0)
-        return;
-    const auto f = webViewScaleCacheFile();
-    const double existing = f.existsAsFile() ? f.loadFileAsString().trim().getDoubleValue() : -1.0;
-    if (std::abs(existing - globalScale) > 0.001)
-    {
-        f.getParentDirectory().createDirectory();
-        f.replaceWithText(juce::String(globalScale, 6));
-    }
-   #endif
-}
-
-} // namespace zc
-
 // WebView2/Chromium の起動前に追加のコマンドライン引数を渡すためのヘルパー。
 //  環境変数 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS に `--force-device-scale-factor=1`
 //  を注入し、WebView2 が独自に DPI スケーリングを適用するのを抑止する。
@@ -308,33 +261,10 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
                               const double cssH = static_cast<double>(args[2]);
                               webResizeRatioW = (cssW > 0.0) ? static_cast<double>(getWidth())  / cssW : 1.0;
                               webResizeRatioH = (cssH > 0.0) ? static_cast<double>(getHeight()) / cssH : 1.0;
-                            #if JUCE_LINUX || JUCE_BSD
-                              webResizeRatioW = 1.0;
-                              webResizeRatioH = 1.0;
-                              resizerConstraints.setSizeLimits(kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
-                              initialLayoutApplied = true;
-
-                              const double dpr = (args.size() >= 4) ? static_cast<double>(args[3]) : 0.0;
-                              if (auto* pp = getPeer())
-                              {
-                                  const double peerScale = pp->getPlatformScaleFactor();
-                                  if (dpr > 0.0 && cssW > 0.0 && peerScale > 0.0 && getWidth() > 0)
-                                  {
-                                      const double F    = (cssW * dpr) / ((double) getWidth() * peerScale);
-                                      const double curG = (double) juce::Desktop::getInstance().getGlobalScaleFactor();
-                                      const double newG = curG / F;
-                                      if (std::abs(F - 1.0) > 0.01)
-                                      {
-                                          zc::cacheWebViewScaleCorrection(newG);
-                                          const int targetW = getWidth();
-                                          const int targetH = getHeight();
-                                          const juce::ScopedValueSetter<bool> selfDriven(resizeSelfDriven, true);
-                                          juce::Desktop::getInstance().setGlobalScaleFactor((float) newG);
-                                          setSize(targetW, targetH);
-                                      }
-                                  }
-                              }
-                            #endif
+                              // 真のディスプレイ倍率 webViewDpr(= args[3] の devicePixelRatio)を確定し、
+                              //  applyDisplayScale で Linux 埋め込み時のウィンドウ物理サイズを補正する。
+                              lastWebViewDpr = (args.size() >= 4) ? static_cast<double>(args[3]) : -1.0;
+                              applyDisplayScale();
                               completion(juce::var{ true });
                               return;
                           }
@@ -507,6 +437,42 @@ void ZeroCompAudioProcessorEditor::resolveResizeAck()
     pendingResizeCompletion = {};
     if (completion)
         completion(juce::var{ true });
+}
+
+void ZeroCompAudioProcessorEditor::applyDisplayScale()
+{
+    // Linux でのウィンドウ物理サイズ補正。ホストの宣言スケール(Bitwig は 150% を 200% と誤判定)に依存せず、
+    //  WebView が OS から拾う真のディスプレイ倍率 webViewDpr を基準にする。Standalone は OS/コンポジタが
+    //  拡大するので対象外（掛けると二重で巨大化）。補正は「ホスト埋め込みプラグイン」だけ（KDE では Standalone も
+    //  埋込も peerScale=1.0 で区別不能のため wrapperType で分岐）。埋込: T=webViewDpr/peerScale
+    //  （KDE埋込 1.5/1.0=1.5 / GNOME埋込 2.0/2.0=1.0）。
+    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        setTransform({});
+        return;
+    }
+
+    double peerScale = 1.0;
+    if (auto* p = getPeer())
+    {
+        const double ps = p->getPlatformScaleFactor();
+        if (ps > 0.0)
+            peerScale = ps;
+    }
+    const float s = (lastWebViewDpr > 0.0) ? (float) (lastWebViewDpr / peerScale) : 1.0f;
+    setTransform(juce::AffineTransform::scale(s));
+
+#if JUCE_LINUX || JUCE_BSD
+    // transform を遅延/再適用すると resized() が自動発火せず WebView 子窓が取り残される（灰色余白）。
+    //  settle 再同期ジグルを再武装して新 transform 下で webView.setBounds/guiRequestResize を再発火させる。
+    settleReconcileDone = false;
+    lastResizeActivityMs = juce::Time::getMillisecondCounter();
+#endif
+}
+
+void ZeroCompAudioProcessorEditor::setScaleFactor(float /*newHostScale*/)
+{
+    applyDisplayScale();
 }
 
 void ZeroCompAudioProcessorEditor::applyWindowResize(

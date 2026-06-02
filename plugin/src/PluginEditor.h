@@ -7,13 +7,6 @@
 #include "PluginProcessor.h"
 #include <optional>
 
-namespace zc {
-// Linux WebView スケール補正（global-scale）のディスクキャッシュ。createEditor で早期適用し、
-//  apply_layout で実測した値を書き戻す。未測定環境では何もしない（既存挙動を変えない）。
-void applyCachedWebViewScaleCorrection();
-void cacheWebViewScaleCorrection(double globalScale);
-}
-
 class ZeroCompAudioProcessorEditor : public juce::AudioProcessorEditor,
                                      private juce::Timer
 {
@@ -28,6 +21,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void setScaleFactor(float newScale) override;
 
 private:
     void timerCallback() override;
@@ -95,6 +89,7 @@ private:
     //  プレッシャ）と落ち着き後の 1px ジグル再同期で収束させる。Windows/macOS は従来どおり。
     void applyWindowResize(int targetW, int targetH,
                            juce::WebBrowserComponent::NativeFunctionCompletion completion);
+    void applyDisplayScale();
     void resolveResizeAck();
     bool   resizeAckPending { false };
     bool   resizeSelfDriven { false };
@@ -109,7 +104,7 @@ private:
     //  分数スケーリング環境でハンドル(CSS px)とウィンドウ(論理px)、初期サイズのズレを防ぐ（MixCompare 方式）。
     double webResizeRatioW { 1.0 };
     double webResizeRatioH { 1.0 };
-    bool   initialLayoutApplied { false };
+    double lastWebViewDpr { -1.0 }; // WebUI が apply_layout で報告する devicePixelRatio（真のディスプレイ倍率）
     // APVTS state の保存サイズ（editorWidth/editorHeight）から復元したか。
     //  復元した場合、apply_layout の初回 ×ratio リサイズで保存値（論理px）を上書きしない（二重適用防止）。
     bool   restoredFromSavedSize { false };

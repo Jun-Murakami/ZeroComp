@@ -1,5 +1,5 @@
 diff --git a/src/wrapper/clap-juce-wrapper.cpp b/src/wrapper/clap-juce-wrapper.cpp
-index 4eb4727..8db63b3 100644
+index 4eb4727..48df7f5 100644
 --- a/src/wrapper/clap-juce-wrapper.cpp
 +++ b/src/wrapper/clap-juce-wrapper.cpp
 @@ -2067,7 +2067,12 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
@@ -16,17 +16,23 @@ index 4eb4727..8db63b3 100644
                  editor->setScaleFactor(clapWrapper.guiScaleFactor);
  #endif
  
-@@ -2097,9 +2102,22 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+@@ -2097,9 +2102,28 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
              return {};
          }
  
 +        // ホスト（物理ピクセル）と JUCE（論理ピクセル）の換算スケール。
-+        //  Windows: JUCE ピアの実 DPI スケール（Per-Monitor DPI が反映され、異 DPI モニタ間でも
-+        //           ピア自身が追従する）。スケール源を一本化することで二重適用を防ぐ。
-+        //  その他 : 従来どおり clap が保持する guiScaleFactor（transform と整合）。
++        //  Windows/Linux: JUCE ピアの実スケール（getPlatformScaleFactor）。
++        //    - Windows: Per-Monitor DPI が反映され、異 DPI モニタ間でもピアが追従する。
++        //    - Linux  : GNOME/Mutter のようにコンポジタが既に窓を拡大する環境では peerScale>1。
++        //               editor 側 transform(s=webViewDpr/peerScale) は getSizeToContainChild に
++        //               含まれるが peerScale は含まれない。ホストは物理pxを要求するため、ここで
++        //               peerScale を掛けて物理へ変換する（KDE は peerScale=1.0 で実質変化なし）。
++        //               これは JUCE VST3 wrapper の convertToHostBounds(×getPlatformScaleFactor) と同じ。
++        //               ※ clap の guiScaleFactor は Bitwig が 150%→200% と誤申告するため使わない。
++        //  その他 (macOS): 従来どおり clap が保持する guiScaleFactor（transform と整合）。
 +        float getHostScale() const
 +        {
-+           #if JUCE_WINDOWS
++           #if JUCE_WINDOWS || JUCE_LINUX || JUCE_BSD
 +            if (auto *peer = getPeer())
 +                return (float)peer->getPlatformScaleFactor();
 +           #endif
@@ -40,20 +46,17 @@ index 4eb4727..8db63b3 100644
              if (juce::isWithin(desktopScale, 1.0f, 1.0e-3f))
                  return pluginRect;
  
-@@ -2113,11 +2131,19 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+@@ -2113,11 +2137,16 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
          {
              if (editor != nullptr)
              {
 -                auto editorBounds = getSizeToContainChild().withPosition(0, 0);
-+                auto editorBounds = getSizeToContainChild().withPosition(0, 0); // 論理
-+              #if JUCE_WINDOWS
-+                // Windows は transform を掛けないため getSizeToContainChild は論理ピクセル。
-+                //  ホストへはピアスケールを掛けた物理ピクセルで要求する。
++                auto editorBounds = getSizeToContainChild().withPosition(0, 0); // 論理(transform込み)
++                // ホストへは getHostScale(=ピアの物理スケール) を掛けた物理ピクセルで要求する。
++                //  Windows/Linux とも peerScale を掛ける（macOS は getHostScale=guiScaleFactor）。
++                //  Linux GNOME(peerScale=2.0) では editor 論理×transform に peerScale を掛けないと物理
++                //  サイズに足りず窓が見切れる（KDE は peerScale=1.0 で no-op）。VST3 wrapper と同じ扱い。
 +                const auto hostBounds = convertToHostBounds(editorBounds);
-+              #else
-+                // 非 Windows は editor 側の transform が既にスケールを内包しているためそのまま。
-+                const auto hostBounds = editorBounds;
-+              #endif
                  {
                      const juce::ScopedValueSetter<bool> resizingParentSetter(resizingParent, true);
 -                    host.guiRequestResize((uint32_t)editorBounds.getWidth(),
@@ -63,7 +66,7 @@ index 4eb4727..8db63b3 100644
                  }
  
                  setBounds(editorBounds.withPosition(0, 0));
-@@ -2133,7 +2159,12 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+@@ -2133,7 +2162,12 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
                  {
                      const juce::ScopedValueSetter<bool> resizingChildSetter{resizingChild, true};
  
@@ -76,7 +79,7 @@ index 4eb4727..8db63b3 100644
                      editor->setBounds(prevEditorBounds.withPosition(0, 0));
                  }
  
-@@ -2339,15 +2370,26 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+@@ -2339,15 +2373,27 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
  
      bool guiSetSize(uint32_t width, uint32_t height) noexcept override
      {
@@ -93,8 +96,9 @@ index 4eb4727..8db63b3 100644
 -
 +      #endif
 +
-+      #if JUCE_WINDOWS
++      #if JUCE_WINDOWS || JUCE_LINUX || JUCE_BSD
 +        // ホストからは物理ピクセルで来るため、ピアスケールで割って論理ピクセルへ変換して設定する。
++        //  （Linux GNOME: peerScale=2.0 → 物理 784 を 論理 392 へ。KDE: peerScale=1.0 で変化なし）
 +        const auto s = editorWrapper->getHostScale();
 +        editorWrapper->setSize(juce::roundToInt((float)width / s),
 +                               juce::roundToInt((float)height / s));
@@ -105,12 +109,13 @@ index 4eb4727..8db63b3 100644
          return true;
      }
  
-@@ -2356,7 +2398,13 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
+@@ -2356,7 +2402,14 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
          const juce::MessageManagerLock mmLock;
          if (editorWrapper != nullptr && editorWrapper->editor != nullptr)
          {
-+          #if JUCE_WINDOWS
-+            // editorWrapper の bounds は論理ピクセル。ホストへはピアスケールを掛けた物理ピクセルで返す。
++          #if JUCE_WINDOWS || JUCE_LINUX || JUCE_BSD
++            // editorWrapper の bounds は論理(transform込み)ピクセル。ホストへはピアスケールを掛けた
++            //  物理ピクセルで返す（Linux GNOME の見切れ対策。KDE は peerScale=1.0 で no-op）。
 +            const auto b =
 +                editorWrapper->convertToHostBounds(editorWrapper->getBounds().withPosition(0, 0));
 +          #else
