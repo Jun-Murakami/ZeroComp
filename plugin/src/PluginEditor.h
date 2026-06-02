@@ -43,6 +43,10 @@ private:
     juce::WebSliderRelay       webOutputGainRelay;
     juce::WebToggleButtonRelay webAutoMakeupRelay;
     juce::WebToggleButtonRelay webSidechainRelay;
+    juce::WebSliderRelay       webScHpfRelay;
+    juce::WebSliderRelay       webScLpfRelay;
+    juce::WebComboBoxRelay     webScHpfSlopeRelay;
+    juce::WebComboBoxRelay     webScLpfSlopeRelay;
     juce::WebComboBoxRelay     webModeRelay;
     juce::WebComboBoxRelay     webMeteringModeRelay;
     juce::WebComboBoxRelay     webDisplayModeRelay; // Metering / Waveform
@@ -55,6 +59,10 @@ private:
     juce::WebSliderParameterAttachment       outputGainAttachment;
     juce::WebToggleButtonParameterAttachment autoMakeupAttachment;
     juce::WebToggleButtonParameterAttachment sidechainAttachment;
+    juce::WebSliderParameterAttachment       scHpfAttachment;
+    juce::WebSliderParameterAttachment       scLpfAttachment;
+    juce::WebComboBoxParameterAttachment     scHpfSlopeAttachment;
+    juce::WebComboBoxParameterAttachment     scLpfSlopeAttachment;
     juce::WebComboBoxParameterAttachment     modeAttachment;
     juce::WebComboBoxParameterAttachment     meteringModeAttachment;
     juce::WebComboBoxParameterAttachment     displayModeAttachment;

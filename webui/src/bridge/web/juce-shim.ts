@@ -46,6 +46,11 @@ function registerDefaults(): void
   sliderStates.set('RELEASE_MS',  makeLinearSlider(100.0, 0.1, 2000));
   sliderStates.set('OUTPUT_GAIN', makeLinearSlider(0.0, -24, 24));
 
+  // SC 検出フィルタ（HPF/LPF）。Web デモには外部サイドチェインが無いのでハリボテ（状態保持のみ・
+  //  DSP 送信なし）。UI を壊さないため state だけ登録する。既定は両方 OFF（HPF=10 / LPF=24000）。
+  sliderStates.set('SC_HPF_HZ', makeLinearSlider(10.0,    10, 24000));
+  sliderStates.set('SC_LPF_HZ', makeLinearSlider(24000.0, 10, 24000));
+
   // --- Toggle ---
   toggleStates.set('AUTO_MAKEUP', new WebToggleState(false));
   // SIDECHAIN は Web デモでは外部入力が無いので状態を保持するだけ（DSP 送信なし）。
@@ -55,6 +60,9 @@ function registerDefaults(): void
   comboBoxStates.set('MODE',          new WebComboBoxState(0, 4)); // VCA / Opto / FET / Vari-Mu
   comboBoxStates.set('METERING_MODE', new WebComboBoxState(0, 3)); // Peak / RMS / Momentary
   comboBoxStates.set('DISPLAY_MODE',  new WebComboBoxState(0, 2)); // Metering / Waveform（UI のみ、DSP 送信なし）
+  // SC フィルタ slope（6/12/18/24 dB/oct）。既定 index 1 = 12。これもハリボテ（DSP 送信なし）。
+  comboBoxStates.set('SC_HPF_SLOPE', new WebComboBoxState(1, 4));
+  comboBoxStates.set('SC_LPF_SLOPE', new WebComboBoxState(1, 4));
 
   // --- 値変化 → WASM エンジンへ直送 ---
   sliderStates.get('THRESHOLD')!.valueChangedEvent.addListener(() => {

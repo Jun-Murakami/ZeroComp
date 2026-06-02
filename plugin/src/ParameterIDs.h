@@ -19,6 +19,14 @@ namespace zc::id {
     //                              （Bitwig + CLAP は未接続でもバスを active にする）に依存しないための明示トグル。
     //                              UI と DSP を繋ぐため PluginEditor に WebToggleButtonRelay/Attachment が必要
     //                              （無いと frontend が "unknown to the backend" になりクリックが no-op になる）。
+    // - SC_HPF_HZ:     float, 10..24000 Hz, log skew, 既定 10 (= OFF)。SC 検出経路の HPF カットオフ。
+    //                              10 で OFF（バイパス）。LPF カットオフを超える値は UI 側で抑止。
+    // - SC_HPF_SLOPE:  choice [6,12,18,24] dB/oct, 既定 12。SC HPF の Butterworth 次数。
+    // - SC_LPF_HZ:     float, 10..24000 Hz, log skew, 既定 24000 (= OFF)。SC 検出経路の LPF カットオフ。
+    //                              24000 で OFF（バイパス）。HPF カットオフ未満の値は UI 側で抑止。
+    // - SC_LPF_SLOPE:  choice [6,12,18,24] dB/oct, 既定 12。SC LPF の Butterworth 次数。
+    //                              SC_HPF/LPF は SIDECHAIN ON 時のみ UI 表示し、検出（外部 SC）信号に適用する。
+    //                              出力音声には掛からない（GR 検出だけを帯域制限）。
     // - MODE:          0=VCA(Clean) / 1=Opto / 2=FET / 3=Vari-Mu（既定 VCA）
     //                  既存の Threshold/Ratio/Knee/Attack/Release をそのまま使い、モードは
     //                  エンベロープ挙動 + 信号経路の色付け（サチュレーション）を切り替える。
@@ -33,6 +41,10 @@ namespace zc::id {
     const juce::ParameterID OUTPUT_GAIN  {"OUTPUT_GAIN",   1};
     const juce::ParameterID AUTO_MAKEUP  {"AUTO_MAKEUP",   1};
     const juce::ParameterID SIDECHAIN    {"SIDECHAIN",     1};
+    const juce::ParameterID SC_HPF_HZ    {"SC_HPF_HZ",     1};
+    const juce::ParameterID SC_HPF_SLOPE {"SC_HPF_SLOPE",  1};
+    const juce::ParameterID SC_LPF_HZ    {"SC_LPF_HZ",     1};
+    const juce::ParameterID SC_LPF_SLOPE {"SC_LPF_SLOPE",  1};
     const juce::ParameterID MODE         {"MODE",          1};
     const juce::ParameterID METERING_MODE{"METERING_MODE", 1};
     const juce::ParameterID DISPLAY_MODE {"DISPLAY_MODE",  1};

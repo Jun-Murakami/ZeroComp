@@ -208,14 +208,14 @@ if (Test-Path $UIPublicDir) {
 
 Set-Location $WebUIDir
 
-# Check if node_modules exists
-if (-not (Test-Path "node_modules")) {
-    Write-Step "Installing npm dependencies..."
-    npm install
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to install npm dependencies"
-        exit 1
-    }
+# Install/refresh npm dependencies on every build so it is never skipped.
+# (Source tree is Syncthing-synced across platforms, so node_modules may be
+#  stale or missing; npm install — not ci — tolerates lockfile/platform drift.)
+Write-Step "Installing npm dependencies..."
+npm install
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to install npm dependencies"
+    exit 1
 }
 
 # Build WebUI

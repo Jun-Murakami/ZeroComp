@@ -10,6 +10,7 @@
 
 #include "ParameterIDs.h"
 #include "dsp/Compressor.h"
+#include "dsp/DetectorFilter.h"
 #include "dsp/MomentaryProcessor.h"
 
 class ZeroCompAudioProcessor : public juce::AudioProcessor
@@ -87,6 +88,8 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     zc::dsp::Compressor compressor;
+    // 検出（外部サイドチェイン）信号に掛ける HPF/LPF。SIDECHAIN ON かつ SC バス接続時のみ適用。
+    zc::dsp::DetectorFilter detectorFilter;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZeroCompAudioProcessor)
 };

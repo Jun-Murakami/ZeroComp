@@ -82,6 +82,8 @@ target_sources(ZeroComp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyEventForwarder.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/Compressor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/Compressor.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/DetectorFilter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/DetectorFilter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/MomentaryProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/MomentaryProcessor.h
 )

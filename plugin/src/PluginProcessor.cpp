@@ -52,6 +52,13 @@ namespace {
         }
     }
 
+    // SC フィルタの slope choice index (0..3) → dB/oct (6/12/18/24)。
+    inline int scSlopeDbFromIndex(int idx) noexcept
+    {
+        static constexpr int kSlopes[] = { 6, 12, 18, 24 };
+        return kSlopes[juce::jlimit(0, 3, idx)];
+    }
+
     // 対数スキュー（等比マッピング）付き NormalisableRange を組み立てる。
     juce::NormalisableRange<float> makeLogRange(float start, float end, float interval = 0.0f)
     {
@@ -122,6 +129,38 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroCompAudioProcessor::crea
         zc::id::SIDECHAIN,
         "Sidechain",
         false));
+
+    // SC_HPF_HZ / SC_LPF_HZ: 検出（サイドチェイン）経路の帯域制限フィルタ。
+    //  10..24000 Hz（log skew）。端の値（HPF=10 / LPF=24000）は OFF（バイパス）扱い。
+    //  既定は両方 OFF。お互いの値を超えない制約は UI 側でクランプする（DSP は素直に適用）。
+    //  log 変換は HorizontalParameter 側（valueToNorm/normToValue）で行うため、
+    //  ここは plugin/Web 双方で「scaled 値 ⇔ 線形正規化」往復になる前提で makeLogRange を使う。
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        zc::id::SC_HPF_HZ,
+        "SC HPF",
+        makeLogRange(10.0f, 24000.0f),
+        10.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    // SC_HPF_SLOPE: 6/12/18/24 dB/oct（Butterworth 次数）。既定 12。
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        zc::id::SC_HPF_SLOPE,
+        "SC HPF Slope",
+        juce::StringArray{ "6", "12", "18", "24" },
+        1));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        zc::id::SC_LPF_HZ,
+        "SC LPF",
+        makeLogRange(10.0f, 24000.0f),
+        24000.0f,
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        zc::id::SC_LPF_SLOPE,
+        "SC LPF Slope",
+        juce::StringArray{ "6", "12", "18", "24" },
+        1));
 
     // RATIO: 1..100（log skew）
     //  内部は 1:1 〜 100:1 のリニア値。UI には "N:1" 表示を任せる。
@@ -230,6 +269,21 @@ void ZeroCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
         compressor.setMode(static_cast<zc::dsp::Compressor::Mode>(idx));
     }
 
+    // 検出フィルタ（SC HPF/LPF）。検出ソースはモノ/ステレオどちらもあり得るので 2ch ぶん用意。
+    detectorFilter.prepare(sampleRate, 2, samplesPerBlock);
+    if (auto* p = parameters.getRawParameterValue(zc::id::SC_HPF_HZ.getParamID()))
+    {
+        const int slope = scSlopeDbFromIndex(static_cast<int>(
+            parameters.getRawParameterValue(zc::id::SC_HPF_SLOPE.getParamID())->load() + 0.5f));
+        detectorFilter.setHighPass(p->load(), slope);
+    }
+    if (auto* p = parameters.getRawParameterValue(zc::id::SC_LPF_HZ.getParamID()))
+    {
+        const int slope = scSlopeDbFromIndex(static_cast<int>(
+            parameters.getRawParameterValue(zc::id::SC_LPF_SLOPE.getParamID())->load() + 0.5f));
+        detectorFilter.setLowPass(p->load(), slope);
+    }
+
     inputMomentary.prepareToPlay(sampleRate, samplesPerBlock);
     outputMomentary.prepareToPlay(sampleRate, samplesPerBlock);
 
@@ -260,6 +314,7 @@ void ZeroCompAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
 void ZeroCompAudioProcessor::releaseResources()
 {
     compressor.reset();
+    detectorFilter.reset();
     inputMomentary.reset();
     outputMomentary.reset();
 }
@@ -311,6 +366,19 @@ void ZeroCompAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     sanitizeBufferFinite(mainBuffer, numChannels, numSamples);
     if (scActive)
         sanitizeBufferFinite(scBuffer, scBuffer.getNumChannels(), numSamples);
+
+    // SC 検出フィルタ（HPF/LPF）を更新し、SC が実際に有効なときだけ検出バッファに in-place 適用する。
+    //  出力音声には掛けない（GR 検出ソースだけを帯域制限する）。端の値は DetectorFilter 側でバイパス。
+    {
+        const int hpSlope = scSlopeDbFromIndex(static_cast<int>(
+            parameters.getRawParameterValue(zc::id::SC_HPF_SLOPE.getParamID())->load() + 0.5f));
+        const int lpSlope = scSlopeDbFromIndex(static_cast<int>(
+            parameters.getRawParameterValue(zc::id::SC_LPF_SLOPE.getParamID())->load() + 0.5f));
+        detectorFilter.setHighPass(parameters.getRawParameterValue(zc::id::SC_HPF_HZ.getParamID())->load(), hpSlope);
+        detectorFilter.setLowPass (parameters.getRawParameterValue(zc::id::SC_LPF_HZ.getParamID())->load(), lpSlope);
+        if (scActive)
+            detectorFilter.processBlock(scBuffer);
+    }
 
     // --- パラメータ取得 ---
     const float thresholdDb = clampFinite(parameters.getRawParameterValue(zc::id::THRESHOLD.getParamID())->load(),   -80.0f, 0.0f,    0.0f);

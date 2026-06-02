@@ -187,6 +187,10 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
       webOutputGainRelay   { zc::id::OUTPUT_GAIN.getParamID() },
       webAutoMakeupRelay   { zc::id::AUTO_MAKEUP.getParamID() },
       webSidechainRelay    { zc::id::SIDECHAIN.getParamID() },
+      webScHpfRelay        { zc::id::SC_HPF_HZ.getParamID() },
+      webScLpfRelay        { zc::id::SC_LPF_HZ.getParamID() },
+      webScHpfSlopeRelay   { zc::id::SC_HPF_SLOPE.getParamID() },
+      webScLpfSlopeRelay   { zc::id::SC_LPF_SLOPE.getParamID() },
       webModeRelay         { zc::id::MODE.getParamID() },
       webMeteringModeRelay { zc::id::METERING_MODE.getParamID() },
       webDisplayModeRelay  { zc::id::DISPLAY_MODE.getParamID() },
@@ -198,6 +202,10 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
       outputGainAttachment   { *p.getState().getParameter(zc::id::OUTPUT_GAIN.getParamID()),   webOutputGainRelay,   nullptr },
       autoMakeupAttachment   { *p.getState().getParameter(zc::id::AUTO_MAKEUP.getParamID()),   webAutoMakeupRelay,   nullptr },
       sidechainAttachment    { *p.getState().getParameter(zc::id::SIDECHAIN.getParamID()),     webSidechainRelay,    nullptr },
+      scHpfAttachment        { *p.getState().getParameter(zc::id::SC_HPF_HZ.getParamID()),     webScHpfRelay,        nullptr },
+      scLpfAttachment        { *p.getState().getParameter(zc::id::SC_LPF_HZ.getParamID()),     webScLpfRelay,        nullptr },
+      scHpfSlopeAttachment   { *p.getState().getParameter(zc::id::SC_HPF_SLOPE.getParamID()),  webScHpfSlopeRelay,   nullptr },
+      scLpfSlopeAttachment   { *p.getState().getParameter(zc::id::SC_LPF_SLOPE.getParamID()),  webScLpfSlopeRelay,   nullptr },
       modeAttachment         { *p.getState().getParameter(zc::id::MODE.getParamID()),          webModeRelay,         nullptr },
       meteringModeAttachment { *p.getState().getParameter(zc::id::METERING_MODE.getParamID()), webMeteringModeRelay, nullptr },
       displayModeAttachment  { *p.getState().getParameter(zc::id::DISPLAY_MODE.getParamID()),  webDisplayModeRelay,  nullptr },
@@ -224,6 +232,10 @@ ZeroCompAudioProcessorEditor::ZeroCompAudioProcessorEditor(ZeroCompAudioProcesso
               .withOptionsFrom(webOutputGainRelay)
               .withOptionsFrom(webAutoMakeupRelay)
               .withOptionsFrom(webSidechainRelay)
+              .withOptionsFrom(webScHpfRelay)
+              .withOptionsFrom(webScLpfRelay)
+              .withOptionsFrom(webScHpfSlopeRelay)
+              .withOptionsFrom(webScLpfSlopeRelay)
               .withOptionsFrom(webModeRelay)
               .withOptionsFrom(webMeteringModeRelay)
               .withOptionsFrom(webDisplayModeRelay)

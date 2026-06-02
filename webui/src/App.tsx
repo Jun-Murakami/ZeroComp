@@ -9,6 +9,7 @@ import { darkTheme } from './theme';
 import { ParameterFader } from './components/ParameterFader';
 import { HorizontalParameter } from './components/HorizontalParameter';
 import { ModeSelector } from './components/ModeSelector';
+import { SidechainFilterControl } from './components/SidechainFilterControl';
 import { RatioGraph } from './components/RatioGraph';
 import { WaveformView } from './components/WaveformView';
 import {
@@ -122,6 +123,9 @@ function App() {
   const { value: autoMakeupOn, setValue: setAutoMakeup } = useJuceToggleValue('AUTO_MAKEUP', false);
   // SIDECHAIN: 外部サイドチェイン検出の ON/OFF（既定 OFF）。ON のときだけ SC バスを検出ソースにする。
   const { value: sidechainOn, setValue: setSidechain } = useJuceToggleValue('SIDECHAIN', false);
+  // SC 検出フィルタのカットオフ。相互制約（HPF ≤ LPF）のため両方の現在値を読む。
+  const { value: scHpfHz } = useJuceSliderValue('SC_HPF_HZ');
+  const { value: scLpfHz } = useJuceSliderValue('SC_LPF_HZ');
 
   // Auto Makeup 時の自動補償量（ハーフ補償、DSP 側と同じ式）。
   //   makeup_dB = -threshold * (1 - 1/ratio) * 0.5
@@ -1048,6 +1052,37 @@ function App() {
               </Box>
             </Box>
 
+            {/* SC フィルタ段: Side-Chain ON のときだけ下段の上に 1 段追加する。
+                左 = SC HPF / 右 = SC LPF（いずれもスライダー + 数値入力 + slope ドロップダウン）。
+                HPF ≤ LPF の相互制約は SidechainFilterControl 側の clampValue で担保。 */}
+            {sidechainOn && (
+              <Box
+                sx={{
+                  width: '100%',
+                  pt: isMobile ? 0 : 1,
+                  borderTop: isMobile ? 'none' : '1px solid',
+                  borderColor: 'divider',
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+                  columnGap: 3,
+                  rowGap: 0.5,
+                }}
+              >
+                <SidechainFilterControl
+                  kind='hpf'
+                  freqParamId='SC_HPF_HZ'
+                  slopeParamId='SC_HPF_SLOPE'
+                  otherHz={scLpfHz}
+                />
+                <SidechainFilterControl
+                  kind='lpf'
+                  freqParamId='SC_LPF_HZ'
+                  slopeParamId='SC_LPF_SLOPE'
+                  otherHz={scHpfHz}
+                />
+              </Box>
+            )}
+
             {/* 下段: デスクトップは 2 カラム、モバイルは 1 カラムに畳む。
                 左カラム: Knee（上）/ MODE（下）
                 右カラム: Attack（上）/ Release（下）
@@ -1055,8 +1090,10 @@ function App() {
             <Box
               sx={{
                 width: '100%',
-                pt: isMobile ? 0 : 1,
-                borderTop: isMobile ? 'none' : '1px solid',
+                // SC フィルタ段がある（sidechainOn）ときは、その下にディバイダを置かず、
+                //  下 2 行と同じ行間（rowGap 相当 = 0.5）でくっつける。
+                pt: isMobile ? 0 : sidechainOn ? 0.5 : 1,
+                borderTop: isMobile || sidechainOn ? 'none' : '1px solid',
                 borderColor: 'divider',
                 display: 'grid',
                 gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',

@@ -41,10 +41,10 @@ fi
 # 作り直す。これを省くと UI 変更がバイナリに反映されない（実際に発生）。Debug は localhost 直読みのため不要。
 if [[ "$CONFIG" != "Debug" ]]; then
     echo "=== Build WebUI: vite build -> plugin/ui/public ==="
-    if [[ ! -d webui/node_modules ]]; then
-        echo "  node_modules が無いため npm ci を実行..."
-        ( cd webui && npm ci )
-    fi
+    # Syncthing 同期環境では node_modules が古い/壊れている可能性があるため毎回 install。
+    # npm ci は lockfile 厳密一致・node_modules 全削除でプラットフォーム差分に弱いので install を使う。
+    echo "  npm install を実行..."
+    ( cd webui && npm install )
     ( cd webui && npm run build )
     echo
 fi

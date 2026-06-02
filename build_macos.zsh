@@ -205,11 +205,9 @@ if [[ "${SKIP_WEBUI:-0}" != "1" ]]; then
 
     pushd "${WEBUI_DIR}" >/dev/null
 
-    # Install dependencies (first time only)
-    if [[ ! -d node_modules ]]; then
-        echo_step "Installing npm dependencies..."
-        npm install --no-audit --no-fund
-    fi
+    # Always install/refresh deps (Syncthing-synced tree; node_modules may be stale).
+    echo_step "Installing npm dependencies..."
+    npm install --no-audit --no-fund
 
     # Build
     echo_step "Building WebUI..."

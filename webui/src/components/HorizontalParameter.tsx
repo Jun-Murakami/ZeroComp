@@ -27,6 +27,19 @@ interface HorizontalParameterProps {
    *  fine step はその interval 以上に設定すること（それ未満だとスナップで値が変わらない）。 */
   wheelStep?: number;
   wheelStepFine?: number;
+  /** 値を確定する直前に通すクランプ関数（相互制約用、例: SC HPF ≤ SC LPF）。
+   *  slider / wheel / 数値入力 / 微調整ドラッグ いずれの経路でも適用される。 */
+  clampValue?: (v: number) => number;
+  /** 右側に追加で描画する要素（slope ドロップダウン等）。入力欄のさらに右に並ぶ。 */
+  endAdornment?: React.ReactNode;
+  /** レールの塗りつぶしをサムの右側にする（HPF 用。通常は左＝min→thumb を塗る）。 */
+  trackInverted?: boolean;
+  /** 数値入力で許可する小数点以下の桁数（確定時に丸める）。未指定なら丸めなし。 */
+  maxInputDecimals?: number;
+  /** 塗り側を太く・未塗り側を細くテーパーするレール描画にする（SC フィルタ用）。
+   *  MUI の rail/track は全幅一律のため、専用のカスタムレールに差し替える。
+   *  塗り側は trackInverted に従う（true=右側 / false=左側）。 */
+  taperFill?: boolean;
 }
 
 const valueToNorm = (v: number, min: number, max: number, skew: SkewKind): number => {
@@ -60,6 +73,11 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
   inputWidth = 50,
   wheelStep = 1,
   wheelStepFine = 0.2,
+  clampValue,
+  endAdornment,
+  trackInverted = false,
+  maxInputDecimals,
+  taperFill = false,
 }) => {
   const { value, state: sliderState, setScaled } = useJuceSliderValue(parameterId);
   const [isDragging, setIsDragging] = useState(false);
@@ -68,7 +86,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
 
   // log スキュー時でも frontend-mirror は線形解釈で scaled 値を送る仕様のため、
   //  log 正規化値ではなく scaled 値 → 線形正規化 の経路で渡す必要がある。
-  const applyValue = (v: number) => setScaled(v, min, max);
+  //  clampValue があれば確定直前に通す（相互制約: SC HPF ≤ SC LPF など）。
+  const applyValue = (v: number) => setScaled(clampValue ? clampValue(v) : v, min, max);
 
   const formatted = formatValue ? formatValue(value) : value.toFixed(1);
   const displayInput = isEditing ? inputText : formatted;
@@ -167,7 +186,9 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: `${labelWidth}px 1fr ${inputWidth}px`,
+        gridTemplateColumns: endAdornment
+          ? `${labelWidth}px 1fr ${inputWidth}px auto`
+          : `${labelWidth}px 1fr ${inputWidth}px`,
         // 2 行 grid: 1 行目 = slider レール行 (auto = 入力欄の高さに自動合わせ),
         //  2 行目 = marker ラベル (12px)。
         //  alignItems: center で 1 行目の中央 (= レール) にラベル/入力欄/slider thumb が揃う。
@@ -206,6 +227,29 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
           py: 0,
         }}
       >
+        {/* テーパーレール: 塗り側を太く・未塗り側を細く描く専用レイヤ（MUI rail/track は非表示にする）。
+            thumb 半径 6px ぶん内側（left/right:6px）に置いて MUI のレール域と一致させる。 */}
+        {taperFill && (
+          <Box sx={{ position: 'absolute', left: '6px', right: '6px', top: 0, bottom: 0, pointerEvents: 'none' }}>
+            {/* レール（全幅・淡色）。太さ/淡さはデフォルトスライダーと同じ（height 3 / opacity 0.5）。 */}
+            <Box
+              sx={{
+                position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)',
+                height: 3, borderRadius: 1.5, bgcolor: 'primary.main', opacity: 0.5,
+              }}
+            />
+            {/* 塗り（filled 側）。HPF(trackInverted)=サム→右端 / それ以外=左端→サム。太さはデフォルトと同じ height 3。 */}
+            <Box
+              sx={{
+                position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+                height: 3, borderRadius: 1.5, bgcolor: 'primary.main',
+                ...(trackInverted
+                  ? { left: `${valueToNorm(value, min, max, skew) * 100}%`, right: 0 }
+                  : { left: 0, width: `${valueToNorm(value, min, max, skew) * 100}%` }),
+              }}
+            />
+          </Box>
+        )}
         <Slider
           value={valueToNorm(value, min, max, skew)}
           onChange={(_: Event, v: number | number[]) => {
@@ -226,6 +270,8 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
           min={0}
           max={1}
           step={0.001}
+          // taperFill 時はカスタムレールを描くので MUI の track は無効化する。
+          track={taperFill ? false : trackInverted ? 'inverted' : 'normal'}
           valueLabelDisplay='off'
           sx={{
             width: '100%',
@@ -243,8 +289,11 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
               height: 12,
               transition: 'opacity 80ms',
             },
-            '& .MuiSlider-track': { height: 3, border: 'none' },
-            '& .MuiSlider-rail': { height: 3, opacity: 0.5 },
+            // track='inverted' は「track（左→サム）を暗色・rail を不透明」にして右側が塗られて
+            //  見える仕組み。右側の塗り＝rail なので、normal の塗りと同じ濃さにするには反転時の
+            //  rail を opacity:1（実色）にする。track（左の未塗り側）は MUI 既定の暗色のまま。
+            '& .MuiSlider-track': { height: 3, border: 'none', display: taperFill ? 'none' : 'block' },
+            '& .MuiSlider-rail': { height: 3, opacity: trackInverted ? 1 : 0.5, display: taperFill ? 'none' : 'block' },
           }}
         />
       </Box>
@@ -310,7 +359,13 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
           onBlur={() => {
             setIsEditing(false);
             const parsed = parseFloat(inputText);
-            if (!isNaN(parsed)) applyValue(parsed);
+            if (!isNaN(parsed)) {
+              const v =
+                maxInputDecimals != null
+                  ? Math.round(parsed * 10 ** maxInputDecimals) / 10 ** maxInputDecimals
+                  : parsed;
+              applyValue(v);
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -338,6 +393,12 @@ export const HorizontalParameter: React.FC<HorizontalParameterProps> = ({
           </Typography>
         )}
       </Box>
+
+      {endAdornment && (
+        <Box sx={{ gridRow: 1, gridColumn: 4, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pl: 0.5 }}>
+          {endAdornment}
+        </Box>
+      )}
     </Box>
   );
 };
