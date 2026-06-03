@@ -650,6 +650,83 @@ echo_step "Creating AU component PKG..."
 PKGROOT_AU="${PKG_WORK_DIR}/root_au"
 rm -rf "${PKGROOT_AU}" && mkdir -p "${PKGROOT_AU}/Library/Audio/Plug-Ins/Components"
 cp -R "${DEST_AU}" "${PKGROOT_AU}/Library/Audio/Plug-Ins/Components/"
+
+# --- Logic カテゴリ用 postinstall（tagset seed）---------------------------------
+#  Logic/GarageBand/MainStage は AU のプラグインカテゴリを Info.plist ではなく
+#   ~/Music/Audio Music Apps/Databases/Tags/<type>-<subtype>-<manufacturer>.tagset
+#   という自前 DB で管理する（UAD 等もこの方式）。ここへ既定カテゴリを seed する。
+#  ※ AU pkg は /Library(システム) へ入るが、この DB はユーザ領域なので postinstall で
+#    実ユーザの $HOME に書く。Logic 系を使わないユーザ(他の AU ホスト専用環境)では
+#    DB が存在しないので、その場合は何もしない（破壊しない・ディレクトリも作らない）。
+SCRIPTS_AU="${PKG_WORK_DIR}/scripts_au"
+rm -rf "${SCRIPTS_AU}" && mkdir -p "${SCRIPTS_AU}"
+
+AU_TYPE=$(/usr/libexec/PlistBuddy -c "Print :AudioComponents:0:type"         "${DEST_AU}/Contents/Info.plist")
+AU_SUB=$(/usr/libexec/PlistBuddy  -c "Print :AudioComponents:0:subtype"      "${DEST_AU}/Contents/Info.plist")
+AU_MAN=$(/usr/libexec/PlistBuddy  -c "Print :AudioComponents:0:manufacturer" "${DEST_AU}/Contents/Info.plist")
+_hexof() { printf '%s' "$1" | xxd -p; }
+TAGSET_NAME="$(_hexof "$AU_TYPE")-$(_hexof "$AU_SUB")-$(_hexof "$AU_MAN").tagset"
+LOGIC_CATEGORY="${LOGIC_CATEGORY:-Dynamics}"
+echo_step "AU Logic category seed: ${LOGIC_CATEGORY} (tagset=${TAGSET_NAME})"
+
+cat > "${SCRIPTS_AU}/postinstall" <<'POSTINSTALL'
+#!/bin/sh
+# Logic/GarageBand/MainStage のプラグインカテゴリ DB に既定カテゴリを seed。
+#  破壊編集を避けるための多重ガード:
+#   - 実 GUI ユーザが取れない/root のみ → 何もしない
+#   - DB(Tags ディレクトリ)が存在しない(= Apple audio apps 未使用) → 何もしない(作らない)
+#   - 書込不可(ロック/権限) → スキップ
+#   - 既に当該 tagset がある(ユーザ/別バージョンが分類済み) → 上書きしない
+#   - 書込/plist 検証に失敗 → 残骸を消してスキップ
+#  いずれもインストールは必ず成功させる(exit 0)。
+set -u
+TAGSET_NAME="@@TAGSET_NAME@@"
+CATEGORY="@@CATEGORY@@"
+
+CONSOLE_USER="$(/usr/bin/stat -f%Su /dev/console 2>/dev/null)"
+[ -n "$CONSOLE_USER" ] || exit 0
+[ "$CONSOLE_USER" != "root" ] || exit 0
+USER_HOME="$(/usr/bin/dscl . -read /Users/"$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
+[ -n "$USER_HOME" ] || exit 0
+
+TAGDIR="$USER_HOME/Music/Audio Music Apps/Databases/Tags"
+[ -d "$TAGDIR" ] || exit 0    # 存在ガード: DB が無ければ何もしない
+[ -w "$TAGDIR" ] || exit 0    # ロック/権限で書けないならスキップ
+
+TAGFILE="$TAGDIR/$TAGSET_NAME"
+[ -e "$TAGFILE" ] && exit 0   # 既存は尊重して上書きしない
+
+TMP="$TAGDIR/.au_logic_tagset.$$"
+cat > "$TMP" 2>/dev/null <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>tags</key>
+	<dict>
+		<key>$CATEGORY</key>
+		<string>tag</string>
+	</dict>
+</dict>
+</plist>
+PLIST
+[ -s "$TMP" ] || { rm -f "$TMP" 2>/dev/null; exit 0; }
+if /usr/bin/plutil -lint "$TMP" >/dev/null 2>&1; then
+    /bin/mv -f "$TMP" "$TAGFILE" 2>/dev/null || { rm -f "$TMP" 2>/dev/null; exit 0; }
+    /usr/sbin/chown "$CONSOLE_USER" "$TAGFILE" 2>/dev/null || true
+else
+    rm -f "$TMP" 2>/dev/null
+fi
+exit 0
+POSTINSTALL
+
+/usr/bin/sed -i '' \
+    -e "s/@@TAGSET_NAME@@/${TAGSET_NAME}/" \
+    -e "s/@@CATEGORY@@/${LOGIC_CATEGORY}/" \
+    "${SCRIPTS_AU}/postinstall"
+chmod +x "${SCRIPTS_AU}/postinstall"
+# ------------------------------------------------------------------------------
+
 PKG_AU="${PKG_WORK_DIR}/ZeroComp_AU.pkg"
 pkgbuild \
     --root "${PKGROOT_AU}" \
@@ -657,6 +734,7 @@ pkgbuild \
     --version "${VERSION}" \
     --install-location "/" \
     --ownership recommended \
+    --scripts "${SCRIPTS_AU}" \
     "${PKG_AU}"
 echo_success "AU PKG creation completed"
 
