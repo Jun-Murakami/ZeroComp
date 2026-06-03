@@ -464,17 +464,15 @@ void ZeroCompAudioProcessorEditor::applyDisplayScale()
     //   処理するため transform 不要。macOS では getPlatformScaleFactor() が Retina でも 1.0 を返す一方
     //   devicePixelRatio は 2.0 のため、無条件適用すると s=2.0 で窓が倍に膨らむ。Windows は両者一致で偶然
     //   s=1.0 に収束するだけ。将来の DPI 不一致事故も含め Linux/BSD 以外では一切走らせない。
-    // Linux でのウィンドウ物理サイズ補正。ホストの宣言スケール(Bitwig は 150% を 200% と誤判定)に依存せず、
-    //  WebView が OS から拾う真のディスプレイ倍率 webViewDpr を基準にする。Standalone は OS/コンポジタが
-    //  拡大するので対象外（掛けると二重で巨大化）。補正は「ホスト埋め込みプラグイン」だけ（KDE では Standalone も
-    //  埋込も peerScale=1.0 で区別不能のため wrapperType で分岐）。埋込: T=webViewDpr/peerScale
-    //  （KDE埋込 1.5/1.0=1.5 / GNOME埋込 2.0/2.0=1.0）。
-    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
-    {
-        setTransform({});
-        return;
-    }
-
+    // 補正の目的は「WebView の CSS ビューポートを設計値へ一致させる」こと。WebView 物理px = 設計CSS × T ×
+    //  peerScale、CSS ビューポート = 物理px / webViewDpr。一致解は wrapperType に依らず T = webViewDpr / peerScale。
+    //  peerScale = getPlatformScaleFactor() は「OS/JUCE が既にウィンドウを何倍に物理拡大したか」の権威値
+    //  （Linux は display->scale / globalScale）なので、この 1 式で「OS 拡大済み(peerScale==webViewDpr)→T=1.0」
+    //  「OS 未拡大(peerScale=1.0,webViewDpr=2.0)→T=2.0」の双方が成立し二重拡大も自動回避される。
+    //  かつて Standalone を setTransform({}) で除外していたが、KDE/Wayland(XWayland) では JUCE の display->scale が
+    //  gsettings(scaling-factor=1) を拾って 1.0 になる一方 WebKitGTK は GDK スケール 2 で webViewDpr=2.0 のため、
+    //  transform 無しだと窓が小さく CSS ビューポートが潰れてレイアウトが崩れる。よって Standalone も同式を適用する
+    //  （StandaloneFilterWindow の getSizeToContainEditor が editor->getTransform() を見て窓サイズを追従させる）。
     double peerScale = 1.0;
     if (auto* p = getPeer())
     {

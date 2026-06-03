@@ -694,7 +694,11 @@ TAGDIR="$USER_HOME/Music/Audio Music Apps/Databases/Tags"
 [ -w "$TAGDIR" ] || exit 0    # ロック/権限で書けないならスキップ
 
 TAGFILE="$TAGDIR/$TAGSET_NAME"
-[ -e "$TAGFILE" ] && exit 0   # 既存は尊重して上書きしない
+# 既存 tagset があっても、カテゴリ未割当(空 dict / tags キー無し。Logic がスキャン時に作る
+#  placeholder)なら seed する。既にカテゴリが入っている(ユーザ手動分類等)場合のみ尊重してスキップ。
+if [ -e "$TAGFILE" ] && /usr/libexec/PlistBuddy -c "Print :tags" "$TAGFILE" 2>/dev/null | grep -q ' = '; then
+    exit 0
+fi
 
 TMP="$TAGDIR/.au_logic_tagset.$$"
 cat > "$TMP" 2>/dev/null <<PLIST

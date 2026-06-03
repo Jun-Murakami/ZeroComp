@@ -3,7 +3,8 @@
 
 param(
     [string]$Configuration = "Release",
-    [switch]$SkipCodeSign
+    [switch]$SkipCodeSign,
+    [switch]$RebuildAAXLib
 )
 
 # Read version from VERSION file
@@ -150,7 +151,11 @@ if (Test-Path "$AAXSDKPath\Interfaces\AAX.h") {
     $AAXLibraryPath = "$AAXSDKPath\Libs\Release\AAXLibrary.lib"
     $AAXLibraryBuildDir = "$AAXSDKPath\Libs\AAXLibrary\build"
     
-    # Always rebuild AAX library to ensure it matches current configuration
+    # AAX ライブラリは Release 構成では内容が変わらないため、ビルド済みなら再利用する。
+    # （以前は毎回フル削除→再ビルドしていた。-RebuildAAXLib で強制再ビルド可能。）
+    if ((Test-Path $AAXLibraryPath) -and -not $RebuildAAXLib) {
+        Write-Success "AAX Library already built (cached) - skipping rebuild"
+    } else {
     if (Test-Path $AAXLibraryBuildDir) {
         Write-Host "  Cleaning previous AAX Library build..." -ForegroundColor Gray
         Remove-Item -Path $AAXLibraryBuildDir -Recurse -Force
@@ -185,6 +190,7 @@ if (Test-Path "$AAXSDKPath\Interfaces\AAX.h") {
     }
     
     Set-Location $RootDir
+    } # end AAX library cache check
 } else {
     Write-Host "AAX SDK not found at: $AAXSDKPath - AAX will be skipped" -ForegroundColor Yellow
     $BuildAAX = $false
@@ -252,45 +258,18 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Build VST3
-Write-Step "Building VST3 plugin..."
-cmake --build . --config $Configuration --target ZeroComp_VST3
+# Build all plugin formats in a single cmake invocation so shared dependencies
+# (JUCE モジュール等) はまとめて 1 回だけコンパイルされ、各フォーマットは並列ビルドされる。
+$BuildTargets = @("ZeroComp_VST3", "ZeroComp_Standalone", "ZeroComp_CLAP")
+if ($BuildAAX) { $BuildTargets += "ZeroComp_AAX" }
+
+Write-Step ("Building plugin formats: " + ($BuildTargets -join ', '))
+cmake --build . --config $Configuration --target $BuildTargets --parallel
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "VST3 build failed"
+    Write-Error "Plugin build failed"
     exit 1
 }
-
-Write-Success "VST3 built successfully"
-
-# Build Standalone
-Write-Step "Building Standalone application..."
-cmake --build . --config $Configuration --target ZeroComp_Standalone
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Standalone build failed"
-    exit 1
-}
-
-Write-Success "Standalone built successfully"
-
-# Build CLAP
-Write-Step "Building CLAP plugin..."
-cmake --build . --config $Configuration --target ZeroComp_CLAP
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "CLAP build failed"
-    exit 1
-}
-Write-Success "CLAP built successfully"
-
-# Build AAX if SDK is available
-if ($BuildAAX) {
-    Write-Step "Building AAX plugin..."
-    cmake --build . --config $Configuration --target ZeroComp_AAX
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "AAX build failed"
-        exit 1
-    }
-    Write-Success "AAX built successfully"
-}
+Write-Success "All plugin formats built successfully"
 
 # Step 3: Packaging for distribution
 Write-Header "Step 3: Packaging for distribution"
