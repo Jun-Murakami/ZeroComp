@@ -1,0 +1,71 @@
+diff --git a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+index 46d5d82819..38db8f2c3c 100644
+--- a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
++++ b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+@@ -40,6 +40,11 @@ struct WebKitURISchemeResponse;
+ namespace juce
+ {
+ 
++// MixCompare patch: the C global `environ` (POSIX) used by the LD_LIBRARY_PATH
++// sanitisation in launchChild(). extern "C" gives it C linkage so it refers to the
++// libc global symbol, not a (namespaced) juce::environ.
++extern "C" char** environ;
++
+ //==============================================================================
+ class WebKitSymbols final : public DeletedAtShutdown
+ {
+@@ -1371,7 +1376,15 @@ public:
+               const StringArray& userStrings)
+         : Thread (SystemStats::getJUCEVersion() + ": Webview"), browser (browserIn), userAgent (optionsIn.getUserAgent())
+     {
+-        webKitIsAvailable = WebKitSymbols::getInstance()->isWebKitAvailable();
++        // MixCompare patch: do NOT probe WebKitGTK in the host process. JUCE runs the
++        // actual webview in an isolated child process; this host-side dlopen only feeds an
++        // availability check. In a GTK2 / old-glib host (e.g. Ardour's bundled .run, whose
++        // LD_LIBRARY_PATH points at an old glib) the probe false-negatives on a glib symbol
++        // clash with the *system* webkit (Fedora etc.), so launchChild() is skipped and the
++        // editor paints blank white — even though the env-sanitised child could load the
++        // system webkit fine. (Hosts with an older system webkit, e.g. Ubuntu/Debian, don't
++        // hit the clash and worked already.) Skip the probe; let the child be the judge.
++        webKitIsAvailable = true;
+         init (InitialisationData { optionsIn.getNativeIntegrationsEnabled(),
+                                    userAgent,
+                                    userStrings.joinIntoString ("\n"),
+@@ -1644,6 +1657,22 @@ private:
+             return arg.toRawUTF8();
+         });
+ 
++        // MixCompare patch (Linux): strip LD_LIBRARY_PATH from the webview child's
++        // environment before exec. The child re-execs to dlopen the *system* WebKitGTK.
++        // When the host is a self-contained bundle that sets LD_LIBRARY_PATH to its own
++        // private libraries (e.g. Ardour's .run points it at an old bundled glib), that
++        // path shadows the system glib WebKitGTK needs and the child dies on an
++        // `undefined symbol` (e.g. g_atomic_ref_count_inc), leaving a blank UI. Passing a
++        // filtered environment to execve lets WebKit resolve the system libraries. The
++        // vector is built before fork() so the child only calls async-signal-safe code.
++        std::vector<char*> childEnv;
++
++        for (char** envEntry = environ; envEntry != nullptr && *envEntry != nullptr; ++envEntry)
++            if (! String (*envEntry).startsWith ("LD_LIBRARY_PATH="))
++                childEnv.push_back (*envEntry);
++
++        childEnv.push_back (nullptr);
++
+         auto pid = fork();
+ 
+         if (pid == 0)
+@@ -1653,12 +1682,12 @@ private:
+ 
+             if (JUCEApplicationBase::isStandaloneApp())
+             {
+-                execv (arguments[0].toRawUTF8(), (char**) argv.data());
++                execve (arguments[0].toRawUTF8(), (char**) argv.data(), childEnv.data());
+             }
+             else
+             {
+                #if JUCE_USE_EXTERNAL_TEMPORARY_SUBPROCESS
+-                execv (arguments[0].toRawUTF8(), (char**) argv.data());
++                execve (arguments[0].toRawUTF8(), (char**) argv.data(), childEnv.data());
+                #else
+                 // After a fork in a multithreaded program, the child can only safely call
+                 // async-signal-safe functions until it calls execv, but if we reached this point

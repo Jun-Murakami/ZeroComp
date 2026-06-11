@@ -1,53 +1,77 @@
 # ApplyJucePatch.cmake
 # ------------------------------------------------------------------------------
-# JUCE（submodule）への修正パッチを、configure のたびに「submodule を pristine に
-# 戻してから現行パッチを当て直す」方式で適用する。ApplyClapPatch.cmake と同じ運用。
+# JUCE（submodule）への修正パッチを configure のたびに冪等適用する。
 #
-# 適用パッチ:
-#   1) Linux WebView の非ASCII文字化け修正
-#      juce_WebBrowserComponent_linux.cpp の子プロセス間チャネル受信が
-#      String(const char*, size_t)=CharPointer_ASCII で UTF-8 を Latin-1 誤デコードし、
-#      日本語ファイル名・エラー文・JS<->C++ 引数が化ける。String::fromUTF8 へ変更して解消。
+# 重要 — なぜ `git -C JUCE` を使わないか:
+#   submodule の JUCE/.git は "gitdir: /home/jun/code/.../.git/modules/JUCE" という
+#   ホスト絶対パスを指す。Docker ビルドではリポジトリは /work にマウントされるため、
+#   この絶対パスはコンテナ内に存在せず `git -C JUCE ...` は「not a git repository」で
+#   失敗していた（＝従来はパッチがビルドに入っていなかった）。
+#   そこで「外側リポジトリ(=/work、コンテナ内でも .git が在る)の git」で
+#   `git apply --directory=JUCE` する方式に変更。host/container どちらでも動く。
 #
-#  - 冪等        : 何度 configure しても結果は同じ
-#  - 更新に追従   : パッチ内容が変わっても常に最新パッチの状態へ収束
-#  - 単一ソース   : 親フォルダ ../patches にマスターがあれば、まずローカル patches/ へ上書き同期
+# 冪等性:
+#   `git checkout -- .` による pristine 化は submodule git に依存するため使わない。
+#   代わりに `git apply --reverse --check`（適用済みなら成功）で判定し、未適用のときのみ
+#   apply する。git apply は原子的なので、当たらないパッチ(陳腐化等)はツリーを汚さず WARNING。
+#   注意: パッチ内容を更新した場合、旧版が当たったままだと自動 revert はされない
+#         （その時は JUCE submodule を手動で clean: `git -C JUCE checkout -- .` してから再 configure）。
 #
-# 注意: 適用前に submodule 作業ツリーを `git checkout -- .` で戻すため、
-#       JUCE 内の手動変更は configure 時に破棄される（変更はパッチへ一本化する方針）。
+# 適用パッチ（JUCE_PATCH_NAMES の順）:
+#   1) juce-webview-linux-utf8.patch  : Linux WebView の非ASCII文字化け修正（＋LV2 HiDPI）
+#   2) juce-webview-linux-ldpath.patch: WebView 子プロセスの LD_LIBRARY_PATH サニタイズ。
+#      Ardour .run 等の自己完結バンドルが LD_LIBRARY_PATH を古い glib に向けるため、
+#      子プロセスの WebKitGTK が undefined symbol で即死→UI真っ白。execve に
+#      LD_LIBRARY_PATH を除いた環境を渡して system ライブラリでロードさせ解消。
 #
+# 単一ソース: 親 ../patches にマスターがあれば、まずローカル patches/ へ上書き同期。
 # 使い方: add_subdirectory(JUCE) の「前」で include すること。
-#   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyJucePatch.cmake)
 # ------------------------------------------------------------------------------
 
-set(JUCE_DIR          "${CMAKE_CURRENT_SOURCE_DIR}/JUCE")
-set(JUCE_PATCH_NAME   "juce-webview-linux-utf8.patch")
-set(JUCE_PATCH_LOCAL  "${CMAKE_CURRENT_SOURCE_DIR}/patches/${JUCE_PATCH_NAME}")
-set(JUCE_PATCH_MASTER "${CMAKE_CURRENT_SOURCE_DIR}/../patches/${JUCE_PATCH_NAME}")
+set(JUCE_DIR_NAME     "JUCE")
+set(JUCE_DIR          "${CMAKE_CURRENT_SOURCE_DIR}/${JUCE_DIR_NAME}")
+set(JUCE_PATCH_NAMES
+    "juce-webview-linux-utf8.patch"
+    "juce-webview-linux-ldpath.patch")
 
-# 1) 大元(親 ../patches)があればローカル patches/ へ上書き同期（全リポへ単一ソースを伝播）
-#    configure_file は入力変更時に再 configure を誘発するため、マスター更新が自動で反映される。
-if(EXISTS "${JUCE_PATCH_MASTER}")
-    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/patches")
-    configure_file("${JUCE_PATCH_MASTER}" "${JUCE_PATCH_LOCAL}" COPYONLY)
-    message(STATUS "juce patch: synced from master (${JUCE_PATCH_MASTER})")
-endif()
+# 1) 大元(親 ../patches)があればローカル patches/ へ上書き同期（host のみ。container では ../patches
+#    が無いので skip、ローカル patches/ はリポジトリと一緒にマウントされている）。
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/patches")
+foreach(_patch IN LISTS JUCE_PATCH_NAMES)
+    set(_master "${CMAKE_CURRENT_SOURCE_DIR}/../patches/${_patch}")
+    if(EXISTS "${_master}")
+        configure_file("${_master}" "${CMAKE_CURRENT_SOURCE_DIR}/patches/${_patch}" COPYONLY)
+        message(STATUS "juce patch: synced from master (${_patch})")
+    endif()
+endforeach()
 
-# 2) ローカルパッチを submodule へ適用（pristine 化 → apply）
-if(EXISTS "${JUCE_PATCH_LOCAL}" AND IS_DIRECTORY "${JUCE_DIR}")
+# 2) 外側リポジトリの git で submodule 配下へ apply（冪等: reverse-check で適用済みを skip）
+if(IS_DIRECTORY "${JUCE_DIR}")
     find_package(Git QUIET)
     if(Git_FOUND)
-        execute_process(
-            COMMAND "${GIT_EXECUTABLE}" -C "${JUCE_DIR}" checkout -- .
-            RESULT_VARIABLE _juce_reset ERROR_QUIET OUTPUT_QUIET)
-        execute_process(
-            COMMAND "${GIT_EXECUTABLE}" -C "${JUCE_DIR}" apply "${JUCE_PATCH_LOCAL}"
-            RESULT_VARIABLE _juce_apply ERROR_VARIABLE _juce_err)
-        if(_juce_apply EQUAL 0)
-            message(STATUS "juce patch: applied ${JUCE_PATCH_NAME}")
-        else()
-            message(WARNING "juce patch: FAILED to apply ${JUCE_PATCH_NAME}\n${_juce_err}")
-        endif()
+        foreach(_patch IN LISTS JUCE_PATCH_NAMES)
+            set(_local "${CMAKE_CURRENT_SOURCE_DIR}/patches/${_patch}")
+            if(EXISTS "${_local}")
+                # 適用済みか？（逆パッチが綺麗に当たれば適用済み）
+                execute_process(
+                    COMMAND "${GIT_EXECUTABLE}" apply --directory=${JUCE_DIR_NAME} -p1 --reverse --check "${_local}"
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                    RESULT_VARIABLE _rev ERROR_QUIET OUTPUT_QUIET)
+                if(_rev EQUAL 0)
+                    message(STATUS "juce patch: already applied ${_patch}")
+                else()
+                    execute_process(
+                        COMMAND "${GIT_EXECUTABLE}" apply --directory=${JUCE_DIR_NAME} -p1 "${_local}"
+                        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                        RESULT_VARIABLE _app ERROR_VARIABLE _err)
+                    if(_app EQUAL 0)
+                        message(STATUS "juce patch: applied ${_patch}")
+                    else()
+                        message(WARNING "juce patch: FAILED to apply ${_patch}\n${_err}")
+                    endif()
+                endif()
+            endif()
+        endforeach()
     else()
         message(WARNING "juce patch: Git not found; skipped (要手動 git apply)")
     endif()
