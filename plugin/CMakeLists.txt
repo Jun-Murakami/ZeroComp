@@ -47,7 +47,7 @@ juce_add_plugin(ZeroComp
     PLUGIN_MANUFACTURER_CODE Jmbc
     PLUGIN_CODE ZrCp
     FORMATS ${ZEROCOMP_FORMATS}
-    LV2URI "https://junmurakami.com/plugins/zerocomp"
+    LV2URI "https://junmurakami.com/apps/zerocomp"
     PLUGIN_AU_MAIN_TYPE "aufx"
     VST3_CATEGORIES "Fx" "Dynamics"
     AAX_CATEGORY "AAX_ePlugInCategory_Dynamics"
