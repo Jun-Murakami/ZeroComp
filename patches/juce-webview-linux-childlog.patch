@@ -1,0 +1,85 @@
+diff --git a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+--- a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
++++ b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+@@ -1666,7 +1666,13 @@
+        #if JUCE_USE_EXTERNAL_TEMPORARY_SUBPROCESS
+         if (! JUCEApplicationBase::isStandaloneApp())
+         {
+-            subprocessFile.emplace ("_juce_linux_subprocess");
++            // MixCompare patch: the helper is exec'd from the temp directory, which fails on
++            // hardened systems where /tmp is mounted noexec. JUCE_WEBVIEW_HELPER_DIR (set by
++            // the plugin after a statvfs ST_NOEXEC check) relocates it to an exec-capable dir.
++            if (const char* helperDir = getenv ("JUCE_WEBVIEW_HELPER_DIR"))
++                subprocessFile.emplace (File (String::fromUTF8 (helperDir)).getChildFile ("_juce_linux_subprocess"));
++            else
++                subprocessFile.emplace ("_juce_linux_subprocess");
+ 
+             const auto externalSubprocessAvailable = subprocessFile->getFile().replaceWithData (LinuxSubprocessHelperBinaryData::juce_linux_subprocess_helper,
+                                                                                                 LinuxSubprocessHelperBinaryData::juce_linux_subprocess_helperSize)
+@@ -1730,6 +1736,41 @@
+             close (inPipe[0]);
+             close (outPipe[1]);
+ 
++            // MixCompare patch: capture the webview child's stdout/stderr into a log file so
++            // end-user failures (dlopen errors, missing WebKitGTK, sandbox problems) become
++            // visible — DAWs swallow the child's stderr. The plugin sets JUCE_WEBVIEW_CHILD_LOG
++            // before the webview is created. open/dup2/write are async-signal-safe; no O_CLOEXEC
++            // so the descriptors survive the execve below.
++            if (const char* childLogPath = getenv ("JUCE_WEBVIEW_CHILD_LOG"))
++            {
++                const int logFd = open (childLogPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
++
++                if (logFd >= 0)
++                {
++                    dup2 (logFd, STDOUT_FILENO);
++                    dup2 (logFd, STDERR_FILENO);
++
++                    if (logFd > STDERR_FILENO)
++                        close (logFd);
++
++                    const char banner[] = "[juce-webview-child] forked, about to exec\n";
++                    [[maybe_unused]] auto ignored = write (STDERR_FILENO, banner, sizeof (banner) - 1);
++
++                    // diag: dump the display-related entries of the exec environment so a
++                    // "cannot open display" in the child can be attributed (missing vs stale)
++                    for (char* const* e = childEnv.data(); *e != nullptr; ++e)
++                    {
++                        if (strstr (*e, "DISPLAY") != nullptr || strstr (*e, "XAUTHORITY") != nullptr
++                            || strstr (*e, "XDG_SESSION_TYPE") != nullptr || strstr (*e, "TMPDIR") != nullptr)
++                        {
++                            ignored = write (STDERR_FILENO, "[juce-webview-child] env: ", 26);
++                            ignored = write (STDERR_FILENO, *e, strlen (*e));
++                            ignored = write (STDERR_FILENO, "\n", 1);
++                        }
++                    }
++                }
++            }
++
+             if (JUCEApplicationBase::isStandaloneApp())
+             {
+                 execve (arguments[0].toRawUTF8(), (char**) argv.data(), childEnv.data());
+@@ -1748,6 +1789,24 @@
+                #endif
+             }
+ 
++            // MixCompare patch: reaching this line means execve FAILED (it never returns on
++            // success). Upstream silently exit(0)s here, hiding e.g. a noexec $TMPDIR. Report
++            // the target and errno to the (possibly redirected) stderr. write/_exit are
++            // async-signal-safe; the strerror-free errno formatting keeps it that way.
++            {
++                const char failMsg[] = "[juce-webview-child] execve FAILED: ";
++                [[maybe_unused]] auto ignored = write (STDERR_FILENO, failMsg, sizeof (failMsg) - 1);
++                ignored = write (STDERR_FILENO, argv[0], strlen (argv[0]));
++
++                char errnoText[] = " (errno 000)\n";
++                const int savedErrno = errno;
++                errnoText[8]  = (char) ('0' + (savedErrno / 100) % 10);
++                errnoText[9]  = (char) ('0' + (savedErrno / 10)  % 10);
++                errnoText[10] = (char) ('0' +  savedErrno        % 10);
++                ignored = write (STDERR_FILENO, errnoText, sizeof (errnoText) - 1);
++                _exit (127);
++            }
++
+             exit (0);
+         }
+ 

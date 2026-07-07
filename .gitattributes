@@ -1,0 +1,2 @@
+# パッチはバイト保全（CRLFコンテキストを守る）
+patches/*.patch -text

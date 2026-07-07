@@ -1,0 +1,66 @@
+diff --git a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+--- a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
++++ b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
+@@ -448,21 +448,59 @@
+         for (auto* l : { &webkitLib, &jsLib, &soupLib })
+             *l = {};
+ 
++        // MixCompare patch: surface the failure (goes to the child log when stderr is
++        // redirected by JUCE_WEBVIEW_CHILD_LOG, or the terminal when running standalone)
++        if (const char* err = dlerror())
++            std::fprintf (stderr, "[juce-webview] dlopen failed for {%s, %s, %s}: %s\n",
++                          names.webkitLib, names.jsLib, names.soupLib, err);
++        else
++            std::fprintf (stderr, "[juce-webview] dlopen failed for {%s, %s, %s}\n",
++                          names.webkitLib, names.jsLib, names.soupLib);
++
+         return false;
+     }
+ 
++    // MixCompare patch: dlopen fallback to the versioned SONAMEs. The unversioned
++    // `libfoo.so` names upstream JUCE uses only exist when the -devel/-dev packages are
++    // installed (Fedora/Debian policy puts the unversioned symlink in the dev package),
++    // so on end-user machines every dlopen fails and the webview never starts (blank
++    // UI), while developer machines work. The versioned SONAMEs below are what the
++    // runtime packages actually ship, and are stable ABI names safe to load directly.
++    static DylibHandle openFirstAvailable (std::initializer_list<const char*> names)
++    {
++        for (auto* name : names)
++            if (auto handle = DylibHandle (name))
++                return handle;
++
++        // MixCompare patch: surface the failure (see openWebKitAndDependencyLibraries)
++        std::fprintf (stderr, "[juce-webview] dlopen failed for all of:");
++
++        for (auto* name : names)
++            std::fprintf (stderr, " %s", name);
++
++        std::fprintf (stderr, " (%s)\n", [] { const char* e = dlerror(); return e != nullptr ? e : "no dlerror"; }());
++
++        return {};
++    }
++
+     //==============================================================================
+     DylibHandle webkitLib, jsLib, soupLib;
+ 
+-    DylibHandle gtkLib    { "libgtk-3.so" },
+-                glib      { "libglib-2.0.so" };
++    DylibHandle gtkLib    = openFirstAvailable ({ "libgtk-3.so",      "libgtk-3.so.0" }),
++                glib      = openFirstAvailable ({ "libglib-2.0.so",   "libglib-2.0.so.0" });
+ 
+     const bool webKitIsAvailable =    (   openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.1.so",
+                                                                               "libjavascriptcoregtk-4.1.so",
+                                                                               "libsoup-3.0.so" })
++                                       || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.1.so.0",
++                                                                              "libjavascriptcoregtk-4.1.so.0",
++                                                                              "libsoup-3.0.so.0" })
+                                        || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.0.so",
+                                                                               "libjavascriptcoregtk-4.0.so",
+-                                                                              "libsoup-2.4.so" }))
++                                                                              "libsoup-2.4.so" })
++                                       || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.0.so.37",
++                                                                              "libjavascriptcoregtk-4.0.so.18",
++                                                                              "libsoup-2.4.so.1" }))
+                                    && loadWebkitSymbols()
+                                    && loadGtkSymbols()
+                                    && loadJsLibSymbols()
