@@ -1,8 +1,7 @@
 diff --git a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
-index 46d5d82819..38db8f2c3c 100644
 --- a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
 +++ b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
-@@ -40,6 +40,11 @@ struct WebKitURISchemeResponse;
+@@ -40,6 +40,11 @@
  namespace juce
  {
  
@@ -14,7 +13,7 @@ index 46d5d82819..38db8f2c3c 100644
  //==============================================================================
  class WebKitSymbols final : public DeletedAtShutdown
  {
-@@ -1371,7 +1376,15 @@ public:
+@@ -1375,7 +1380,15 @@
                const StringArray& userStrings)
          : Thread (SystemStats::getJUCEVersion() + ": Webview"), browser (browserIn), userAgent (optionsIn.getUserAgent())
      {
@@ -31,7 +30,7 @@ index 46d5d82819..38db8f2c3c 100644
          init (InitialisationData { optionsIn.getNativeIntegrationsEnabled(),
                                     userAgent,
                                     userStrings.joinIntoString ("\n"),
-@@ -1644,6 +1657,22 @@ private:
+@@ -1648,6 +1661,30 @@
              return arg.toRawUTF8();
          });
  
@@ -46,15 +45,23 @@ index 46d5d82819..38db8f2c3c 100644
 +        std::vector<char*> childEnv;
 +
 +        for (char** envEntry = environ; envEntry != nullptr && *envEntry != nullptr; ++envEntry)
-+            if (! String (*envEntry).startsWith ("LD_LIBRARY_PATH="))
++            if (! String (*envEntry).startsWith ("LD_LIBRARY_PATH=")
++                && ! String (*envEntry).startsWith ("GDK_BACKEND="))
 +                childEnv.push_back (*envEntry);
++
++        // MixCompare patch: the child is X11-only (it embeds via XEmbed/GtkPlug and calls
++        // gdk_set_allowed_backends("x11")). If the host environment carries GDK_BACKEND with
++        // any other value (e.g. "wayland"), GDK's backend intersection becomes empty and
++        // gtk_init dies with "cannot open display" without ever trying a socket. Pin it.
++        static char gdkBackendForChild[] = "GDK_BACKEND=x11";
++        childEnv.push_back (gdkBackendForChild);
 +
 +        childEnv.push_back (nullptr);
 +
          auto pid = fork();
  
          if (pid == 0)
-@@ -1653,12 +1682,12 @@ private:
+@@ -1657,12 +1694,12 @@
  
              if (JUCEApplicationBase::isStandaloneApp())
              {

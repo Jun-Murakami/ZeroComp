@@ -1,0 +1,6 @@
+# パッチは常に CRLF でチェックアウトする（text eol=crlf）。JUCE のソースが CRLF なので
+# パッチの context 行も CRLF でないと git apply が不一致で失敗し、ApplyJucePatch が
+# 「パッチ無し」バイナリを黙って出荷する事故になる。-text（バイト保全）はどこかのマシンで
+# LF 保存されると劣化するため、環境非依存で必ず CRLF になる text eol=crlf を使う。
+# 詳細は cmake/ApplyJucePatch.cmake 冒頭コメント参照。
+patches/*.patch text eol=crlf
