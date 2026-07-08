@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Jun Murakami
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Version.h"
+#include "util/DiagnosticLog.h"
 
 #include <cmath>
 #include <algorithm>
@@ -83,6 +85,8 @@ ZeroCompAudioProcessor::ZeroCompAudioProcessor()
                          .withOutput("Output",    juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, juce::Identifier("ZeroComp"), createParameterLayout())
 {
+    // WebView 起動診断ログ + Linux 描画/起動緩和策（エディタ生成より前に実行）
+    wvdiag::DiagnosticLog::install(ZEROCOMP_PRODUCT_NAME, ZEROCOMP_VERSION_STRING);
 }
 
 ZeroCompAudioProcessor::~ZeroCompAudioProcessor() = default;

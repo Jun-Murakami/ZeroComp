@@ -76,6 +76,8 @@ target_sources(ZeroComp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PluginEditor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PluginEditor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PluginProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/util/DiagnosticLog.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/util/DiagnosticLog.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PluginProcessor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ParameterIDs.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyEventForwarder.cpp
