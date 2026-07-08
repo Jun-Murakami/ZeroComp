@@ -161,6 +161,14 @@ lookahead も oversampling も**使わない**。
 - 出力サイズは Release -O3 で ~30KB。`STANDALONE_WASM=1` + `ALLOW_MEMORY_GROWTH=1`。エクスポート関数一覧は `wasm/CMakeLists.txt` の `EXPORTED_FUNCTIONS` を参照。
 - **DSP に変更を入れたら必ず WASM も再ビルドして `webui/public-web/wasm/` 配下を更新する**。WASM を更新せず `webui build` すると Web デモだけ旧ロジックのままになる。
 
+### JUCE パッチ機構（Linux WebView 修正）
+
+- `patches/juce-webview-linux-{utf8,ldpath,soname,childlog}.patch` を `cmake/ApplyJucePatch.cmake` が configure 時に冪等適用する（`git apply --reverse --check` で適用済みを判定し、未適用のみ apply）。**適用失敗・パッチ欠落は FATAL**（かつて WARNING で握りつぶし、パッチ無しバイナリを黙って出荷する事故があった）。失敗時は **touched files を `git checkout HEAD --` で pristine 化して全パッチを再適用する自動リカバリ**を持つ（旧版が焼き込まれた stale ツリーを回復）。
+  - utf8: 非ASCII文字化け修正（＋LV2 HiDPI） / ldpath: WebView 子プロセスの `LD_LIBRARY_PATH` サニタイズ＋`GDK_BACKEND=x11` 固定 / soname: `dlopen` をバージョン付き SONAME（`.so.0` 等）へフォールバック / childlog: 子プロセスの stdout/stderr をログへ dup2。**この順序でのみ適用可**（childlog は soname が追加した行を文脈に含む）。
+- **JUCE の C/C++ ソースは CRLF**（`git show HEAD:*.cpp` の生バイトが `\r\n`。autocrlf 副作用ではなくリポジトリの blob 自体）。よってパッチも **CRLF 必須**。`.gitattributes` の `patches/*.patch text eol=crlf` で、コミットしたマシンの改行設定に依存せず**チェックアウト時に必ず CRLF を実体化**する（`-text` はバイト保全なので、どこかのマシンで LF 保存されると劣化し configure が FATAL する）。
+- **マスター同期**: 親 `../patches`（= `JUCE/patches`、**マシンローカルで git 非管理**の共有プール）があれば、configure 時にローカル `patches/` へ**生ファイルコピーで上書き同期**される（`configure_file COPYONLY`＝gitattributes を貫通）。**パッチを編集したら必ず `../patches` にもコピー**し、マスターは CRLF・最新に保つこと。**同期を忘れてマスターだけ旧版に取り残されると、ホストビルドで新パッチが黙って旧版へ退行する**（Docker は container に `../patches` が無いので無関係）。
+- 姉妹6リポ（MixCompare / TinyVU / ZeroComp / ZeroEQ / ZeroLimit / TestTone）で同一機構。JUCE submodule commit が揃っていればパッチは共有可。
+
 ### バージョン管理
 
 - `VERSION` ファイルで一元管理。CMake と `build_windows.ps1` がここから読む
