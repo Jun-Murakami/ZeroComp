@@ -1,66 +1,114 @@
 diff --git a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
 --- a/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
 +++ b/modules/juce_gui_extra/native/juce_WebBrowserComponent_linux.cpp
-@@ -448,21 +448,59 @@
-         for (auto* l : { &webkitLib, &jsLib, &soupLib })
-             *l = {};
- 
-+        // MixCompare patch: surface the failure (goes to the child log when stderr is
-+        // redirected by JUCE_WEBVIEW_CHILD_LOG, or the terminal when running standalone)
-+        if (const char* err = dlerror())
-+            std::fprintf (stderr, "[juce-webview] dlopen failed for {%s, %s, %s}: %s\n",
-+                          names.webkitLib, names.jsLib, names.soupLib, err);
-+        else
-+            std::fprintf (stderr, "[juce-webview] dlopen failed for {%s, %s, %s}\n",
-+                          names.webkitLib, names.jsLib, names.soupLib);
-+
-         return false;
+@@ -429,18 +429,66 @@
+                             makeSymbolBinding (juce_g_free, "g_free"));
      }
  
-+    // MixCompare patch: dlopen fallback to the versioned SONAMEs. The unversioned
-+    // `libfoo.so` names upstream JUCE uses only exist when the -devel/-dev packages are
-+    // installed (Fedora/Debian policy puts the unversioned symlink in the dev package),
-+    // so on end-user machines every dlopen fails and the webview never starts (blank
-+    // UI), while developer machines work. The versioned SONAMEs below are what the
-+    // runtime packages actually ship, and are stable ABI names safe to load directly.
-+    static DylibHandle openFirstAvailable (std::initializer_list<const char*> names)
-+    {
-+        for (auto* name : names)
-+            if (auto handle = DylibHandle (name))
+-    struct WebKitAndDependencyLibraryNames
++    // MixCompare patch: resolve a library by its API-generation base name (e.g.
++    // "libwebkit2gtk-4.1") WITHOUT hardcoding the SONAME number. Upstream JUCE only tries
++    // the unversioned "<base>.so", which on Fedora/Debian exists solely in the -devel/-dev
++    // packages, so end-user machines fail every dlopen and the webview never starts (blank
++    // UI). We try, in order:
++    //   1) "<base>.so"                 -- the devel symlink, if present
++    //   2) "<base>.so.<N>" discovered by scanning the standard library directories, highest
++    //      N first -- the SONAME the runtime package actually ships.
++    // Only the generation base (4.1 = libsoup3 world / 4.0 = libsoup2 world) is hardcoded;
++    // it names an ABI generation and must be known. The trailing SONAME number is discovered
++    // at runtime, so a future SONAME bump needs no code change.
++    static DylibHandle openLibraryByBase (const String& base, int flags = RTLD_NOW | RTLD_LOCAL)
+     {
+-        const char* webkitLib;
+-        const char* jsLib;
+-        const char* soupLib;
++        if (auto handle = DylibHandle ((base + ".so").toRawUTF8(), flags))
++            return handle;
++
++        struct Candidate { int soVersion; String path; };
++        std::vector<Candidate> candidates;
++
++        for (auto* dirPath : { "/usr/lib64", "/usr/lib/x86_64-linux-gnu",
++                               "/usr/lib", "/lib64", "/usr/local/lib" })
++        {
++            const File dir { dirPath };
++
++            if (! dir.isDirectory())
++                continue;
++
++            for (const auto& file : dir.findChildFiles (File::findFiles, false, base + ".so.*"))
++            {
++                // Keep only "<base>.so.<digits>" (the bare SONAME); skip fully-versioned
++                // files like "<base>.so.0.1.0".
++                const auto suffix = file.getFileName().fromLastOccurrenceOf (".so.", false, false);
++
++                if (suffix.isNotEmpty() && suffix.containsOnly ("0123456789"))
++                    candidates.push_back ({ suffix.getIntValue(), file.getFullPathName() });
++            }
++        }
++
++        std::sort (candidates.begin(), candidates.end(),
++                   [] (const Candidate& a, const Candidate& b) { return a.soVersion > b.soVersion; });
++
++        for (const auto& candidate : candidates)
++            if (auto handle = DylibHandle (candidate.path.toRawUTF8(), flags))
 +                return handle;
-+
-+        // MixCompare patch: surface the failure (see openWebKitAndDependencyLibraries)
-+        std::fprintf (stderr, "[juce-webview] dlopen failed for all of:");
-+
-+        for (auto* name : names)
-+            std::fprintf (stderr, " %s", name);
-+
-+        std::fprintf (stderr, " (%s)\n", [] { const char* e = dlerror(); return e != nullptr ? e : "no dlerror"; }());
 +
 +        return {};
 +    }
 +
++    struct WebKitAndDependencyLibraryBases
++    {
++        const char* webkit;
++        const char* js;
++        const char* soup;
+     };
+ 
+-    bool openWebKitAndDependencyLibraries (const WebKitAndDependencyLibraryNames& names)
++    bool openWebKitAndDependencyLibraries (const WebKitAndDependencyLibraryBases& bases)
+     {
+-        if (   (webkitLib = DylibHandle (names.webkitLib, RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE))
+-            && (jsLib = DylibHandle (names.jsLib))
+-            && (soupLib = DylibHandle (names.soupLib)))
++        if (   (webkitLib = openLibraryByBase (bases.webkit, RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE))
++            && (jsLib = openLibraryByBase (bases.js))
++            && (soupLib = openLibraryByBase (bases.soup)))
+         {
+             return true;
+         }
+@@ -448,21 +496,26 @@
+         for (auto* l : { &webkitLib, &jsLib, &soupLib })
+             *l = {};
+ 
++        // MixCompare patch: surface the failure (goes to the child log when stderr is
++        // redirected by JUCE_WEBVIEW_CHILD_LOG, or the terminal when running standalone).
++        std::fprintf (stderr, "[juce-webview] could not load {%s, %s, %s} (tried .so and .so.<N>)\n",
++                      bases.webkit, bases.js, bases.soup);
++
+         return false;
+     }
+ 
      //==============================================================================
      DylibHandle webkitLib, jsLib, soupLib;
  
 -    DylibHandle gtkLib    { "libgtk-3.so" },
 -                glib      { "libglib-2.0.so" };
-+    DylibHandle gtkLib    = openFirstAvailable ({ "libgtk-3.so",      "libgtk-3.so.0" }),
-+                glib      = openFirstAvailable ({ "libglib-2.0.so",   "libglib-2.0.so.0" });
++    DylibHandle gtkLib    = openLibraryByBase ("libgtk-3"),
++                glib      = openLibraryByBase ("libglib-2.0");
  
-     const bool webKitIsAvailable =    (   openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.1.so",
-                                                                               "libjavascriptcoregtk-4.1.so",
-                                                                               "libsoup-3.0.so" })
-+                                       || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.1.so.0",
-+                                                                              "libjavascriptcoregtk-4.1.so.0",
-+                                                                              "libsoup-3.0.so.0" })
-                                        || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.0.so",
-                                                                               "libjavascriptcoregtk-4.0.so",
+-    const bool webKitIsAvailable =    (   openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.1.so",
+-                                                                              "libjavascriptcoregtk-4.1.so",
+-                                                                              "libsoup-3.0.so" })
+-                                       || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.0.so",
+-                                                                              "libjavascriptcoregtk-4.0.so",
 -                                                                              "libsoup-2.4.so" }))
-+                                                                              "libsoup-2.4.so" })
-+                                       || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.0.so.37",
-+                                                                              "libjavascriptcoregtk-4.0.so.18",
-+                                                                              "libsoup-2.4.so.1" }))
++    const bool webKitIsAvailable =    (   openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.1",
++                                                                              "libjavascriptcoregtk-4.1",
++                                                                              "libsoup-3.0" })
++                                       || openWebKitAndDependencyLibraries ({ "libwebkit2gtk-4.0",
++                                                                              "libjavascriptcoregtk-4.0",
++                                                                              "libsoup-2.4" }))
                                     && loadWebkitSymbols()
                                     && loadGtkSymbols()
                                     && loadJsLibSymbols()
+
