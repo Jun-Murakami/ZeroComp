@@ -235,6 +235,14 @@ if(WIN32)
         /utf-8
     )
     target_link_libraries(ZeroComp PRIVATE Dbghelp)
+
+    # CLAP ラッパー(clap-juce-wrapper.cpp)は clap-juce-extensions 側で ZeroComp_CLAP
+    # ターゲットとしてコンパイルされ、上の ZeroComp への /utf-8 が届かない。DPI パッチが
+    # UTF-8 の日本語コメントを追加しているため、MSVC が既定コードページ(CP932)で解釈すると
+    # コメントが後続コードを飲み込み C2059/C3861 等で壊れる。CLAP にも /utf-8 を明示する。
+    if(TARGET ZeroComp_CLAP)
+        target_compile_options(ZeroComp_CLAP PRIVATE /utf-8)
+    endif()
 endif()
 
 if(MSVC)
